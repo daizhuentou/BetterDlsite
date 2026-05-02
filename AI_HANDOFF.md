@@ -72,6 +72,7 @@ WORK_RETRY_DELAY = 0
 
 - `output/index.html`
 - `output/data/categories.json`
+- `output/data/search_index.json`
 - `output/data/json/page_*.json`
 - `output/data/json/<分类名>/page_*.json`
 - `待翻译/RJxxxx.md` / `待翻译/VJxxxx.md`
@@ -85,6 +86,7 @@ WORK_RETRY_DELAY = 0
 - 每个分类有独立 JSON 分页目录。
 - 网页通过 `output/data/categories.json` 渲染顶部分类下拉框。
 - 分类索引会为带 `genre[0]/...` 的来源 URL 写入 `genre_id`，用于排查相近分类；网页下拉框仍只显示分类名和数量，不显示编号。
+- 网页右上角有全局搜索栏。`generate.py` 会生成轻量 `output/data/search_index.json`，搜索时先异步加载索引并在内存中过滤，再只加载当前搜索结果页需要的作品 JSON，避免每次搜索拉取全部分页。
 - 作品 JSON 会从 `#work_outline` 解析 `作品形式`。
 - `作品形式` 命中 `音声・ASMR/ボイス・ASMR/ASMR` 时归类为 `音声・ASMR`；命中 `マンガ/漫画/コミック` 时归类为 `漫画`；两者都不命中时归类为 `游戏`。
 - 网页会按分类展示可选的 `work_kinds`，并提供“作品类型”多选筛选。
@@ -168,6 +170,28 @@ python open_page.py
 ```powershell
 Ctrl+C
 python open_page.py
+```
+
+### `retry_failed.py`
+
+负责重试下载 `failed_works.md` 中记录的失败作品。
+
+主要功能：
+- 解析 `failed_works.md` 中的失败作品列表，提取作品 ID 和 URL
+- 并发重试下载（默认 10 个并发）
+- 每个作品最多重试 3 次，自动切换 URL 格式（announce ↔ work）
+- 成功下载的作品从列表中移除
+- 全部成功时自动删除 `failed_works.md`
+
+相关常量：
+```python
+MAX_CONCURRENT = 10
+MAX_RETRIES = 3
+```
+
+运行：
+```powershell
+python retry_failed.py
 ```
 
 ## 数据文件说明
@@ -254,6 +278,10 @@ works/VJ01004768.html
 2. 确认 `output/data/categories.json` 有多个分类。
 3. 重启 `open_page.py` 并使用带 `?v=` 的新 URL。
 
+### `output/data/search_index.json`
+
+网页搜索栏读取这个文件。每条索引只保存作品 ID、所在全部作品分页、作品类型、所属分类 slug 和预处理后的搜索文本；真正渲染搜索结果时再按分页读取 `output/data/json/page_*.json` 中的完整作品数据。
+
 ## 当前已知分类状态
 
 最近修复后的分类关系：
@@ -337,6 +365,10 @@ python md_to_json.py
 - 2026-05-02：网页新增作品本地状态管理。每张作品卡有“喜欢 / 不需要 / 玩过”按钮，普通分类会过滤这三类作品；分类下拉框追加“喜欢 / 不需要 / 玩过”虚拟分类；右下角新增“本页已阅”、“取消本页已阅”和“隐藏已阅”按钮。状态保存在浏览器 `localStorage`，重新运行 `generate.py` 不会清空浏览器里的标记。
 - 2026-05-02：作品卡左上角的 `RJ/VJ` 编号改为可点击复制的徽标，沿用现有复制反馈逻辑。
 - 2026-05-02：作品类型增加 `漫画`。`generate.py` 从 `作品形式` 中识别 `マンガ/漫画/コミック` 为漫画；音声和漫画都不匹配时才归类为 `游戏`。
+- 2026-05-03：网页新增右上角全局搜索栏。`generate.py` 输出 `output/data/search_index.json`，前端异步加载轻量索引并按当前分类、作品类型和本地状态过滤搜索结果；展示时只读取当前结果页需要的作品分页 JSON。
+- 2026-05-03：修复搜索框左侧图标偶尔显示成“、”的问题。搜索图标从 CSS 伪元素改为内嵌 SVG，避免伪元素手柄偏移造成视觉杂点。
+- 2026-05-03：改进 crawler 的 URL 历史记录功能。支持记忆所有用过的 URL，交互模式下显示历史 URL 列表并支持多选（用逗号分隔序号），新 URL 自动追加到历史中不重复。
+- 2026-05-03：新增 retry_failed.py 脚本。解析 failed_works.md 并自动重试下载失败作品，支持 announce 和 work 格式 URL 自动切换，成功的作品从列表移除，全部成功则删除文件。
 
 ## GUI 应用 (`gui/`)
 
