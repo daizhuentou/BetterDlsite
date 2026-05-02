@@ -8,6 +8,7 @@ import aiohttp
 import html as html_lib
 import shutil
 import time
+import unicodedata
 from copy import deepcopy
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -27,6 +28,7 @@ DONE_TRANSLATE_DIR = TRANSLATE_DIR / "已翻译"
 TRANSLATED_DRAFT_DIR = BASE_DIR / "翻译稿"
 ORIG_DIR = DATA_DIR / "orig"
 CATEGORIES_FILE = DATA_DIR / "categories.json"
+SEARCH_INDEX_FILE = DATA_DIR / "search_index.json"
 SLIDER_IMAGES_DIR = IMAGES_DIR / "slider"
 PARTS_IMAGES_DIR = IMAGES_DIR / "parts"
 MAX_CONCURRENT_IMAGES = 300  # 最大并发下载图片数量
@@ -596,6 +598,49 @@ def write_paged_outputs(works, json_dir, label):
     return total_pages
 
 
+def normalize_search_text(value):
+    value = unicodedata.normalize("NFKC", str(value or "")).lower()
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def build_search_text(work):
+    values = [
+        work.get("product_id", ""),
+        work.get("work_name", ""),
+        work.get("maker_name", ""),
+        work.get("description_clean", ""),
+        work.get("work_kind", WORK_KIND_GAME),
+    ]
+    values.extend(work.get("work_types", []))
+    return normalize_search_text(" ".join(values))
+
+
+def write_search_index(works, crawl_categories):
+    categories_by_work_id = {}
+    for category in crawl_categories:
+        slug = category.get("slug")
+        if not slug:
+            continue
+        for work_id in category.get("work_ids", []):
+            categories_by_work_id.setdefault(work_id, set()).add(slug)
+
+    index = []
+    for idx, work in enumerate(works):
+        work_id = work["product_id"]
+        index.append({
+            "product_id": work_id,
+            "page": idx // ITEMS_PER_PAGE + 1,
+            "index": idx % ITEMS_PER_PAGE,
+            "kind": work.get("work_kind", WORK_KIND_GAME),
+            "categories": sorted(categories_by_work_id.get(work_id, set())),
+            "text": build_search_text(work),
+        })
+
+    with open(SEARCH_INDEX_FILE, "w", encoding="utf-8") as f:
+        json.dump(index, f, ensure_ascii=False)
+    print(f"搜索索引已生成: {SEARCH_INDEX_FILE} ({len(index)} 个作品)")
+
+
 def cleanup_stale_category_dirs(valid_slugs):
     if not JSON_DIR.exists():
         return
@@ -686,10 +731,87 @@ def generate_html(total_works):
         h1 {
             text-align: center;
             color: #fff;
-            margin-bottom: 30px;
             font-size: 2.5em;
             text-shadow: 0 0 20px rgba(102, 126, 234, 0.5);
             letter-spacing: 2px;
+        }
+        .top-bar {
+            position: relative;
+            min-height: 56px;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .search-box {
+            position: absolute;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            width: min(380px, 32vw);
+            min-width: 260px;
+        }
+        .search-input {
+            width: 100%;
+            height: 44px;
+            border: 1px solid rgba(255,255,255,0.28);
+            border-radius: 999px;
+            padding: 0 46px 0 44px;
+            color: #fff;
+            background: rgba(255,255,255,0.12);
+            backdrop-filter: blur(18px);
+            box-shadow: 0 14px 34px rgba(0,0,0,0.22);
+            font-size: 0.95em;
+            outline: none;
+            transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+        }
+        .search-input::placeholder {
+            color: rgba(255,255,255,0.62);
+        }
+        .search-input:focus {
+            border-color: rgba(255,255,255,0.58);
+            background: rgba(255,255,255,0.18);
+            box-shadow: 0 16px 38px rgba(102,126,234,0.28);
+        }
+        .search-icon {
+            position: absolute;
+            left: 17px;
+            top: 50%;
+            width: 18px;
+            height: 18px;
+            color: rgba(255,255,255,0.68);
+            transform: translateY(-50%);
+            pointer-events: none;
+        }
+        .search-icon circle,
+        .search-icon path {
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2.2;
+            stroke-linecap: round;
+        }
+        .search-clear {
+            position: absolute;
+            right: 7px;
+            top: 50%;
+            width: 30px;
+            height: 30px;
+            border: none;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.16);
+            color: #fff;
+            cursor: pointer;
+            transform: translateY(-50%);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease, background 0.2s ease;
+        }
+        .search-clear.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .search-clear:hover {
+            background: rgba(255,255,255,0.28);
         }
         .category-bar {
             display: flex;
@@ -1134,6 +1256,19 @@ def generate_html(total_works):
         @media (max-width: 768px) {
             .works-grid { grid-template-columns: 1fr; }
             h1 { font-size: 1.8em; }
+            .top-bar {
+                display: block;
+                min-height: 0;
+            }
+            .search-box {
+                position: relative;
+                right: auto;
+                top: auto;
+                transform: none;
+                width: 100%;
+                min-width: 0;
+                margin-top: 18px;
+            }
             .image-carousel { height: 250px; }
             .category-bar { justify-content: flex-start; }
             .floating-actions { left: 12px; right: 12px; bottom: 12px; }
@@ -1142,7 +1277,17 @@ def generate_html(total_works):
 </head>
 <body>
     <div class="container">
-        <h1>作品展示</h1>
+        <div class="top-bar">
+            <h1>作品展示</h1>
+            <div class="search-box" role="search">
+                <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <circle cx="11" cy="11" r="7"></circle>
+                    <path d="m16.5 16.5 4.5 4.5"></path>
+                </svg>
+                <input class="search-input" id="searchInput" type="search" placeholder="搜索 RJ / 标题 / 社团" autocomplete="off" oninput="queueSearch(this.value)">
+                <button class="search-clear" id="searchClear" type="button" onclick="clearSearch()" aria-label="清空搜索">&times;</button>
+            </div>
+        </div>
         <div class="category-bar toolbar">
             <div class="control-group">
                 <span class="category-label">分类</span>
@@ -1178,11 +1323,17 @@ def generate_html(total_works):
         let currentData = null;
         let currentAllData = null;
         let currentAllDataPromise = null;
+        let searchIndex = null;
+        let searchIndexPromise = null;
+        let searchQuery = '';
+        let searchTerms = [];
+        let searchDebounceTimer = null;
+        let searchResultEntries = null;
+        const searchPageCache = new Map();
         let currentTotalWorks = FALLBACK_TOTAL_WORKS;
         let currentTotalPages = FALLBACK_TOTAL_PAGES;
         let activeWorkTypes = [];
         let hideReadWorks = false;
-        const WORK_STATE_KEY = 'dlsiteWorkStates.v1';
         const STATUS_CATEGORY_LIKED = '__liked__';
         const STATUS_CATEGORY_DISLIKED = '__disliked__';
         const STATUS_CATEGORY_PLAYED = '__played__';
@@ -1192,7 +1343,28 @@ def generate_html(total_works):
             [STATUS_CATEGORY_PLAYED]: { name: '玩过', preference: 'played' }
         };
         const HIDDEN_PREFERENCES = ['liked', 'disliked', 'played'];
-        let workStates = loadWorkStates();
+        let workStates = {};
+
+        async function initWorkStates() {
+            workStates = await loadWorkStates();
+            if (Object.keys(workStates).length === 0) {
+                const legacy = loadLegacyWorkStates();
+                if (Object.keys(legacy).length > 0) {
+                    workStates = legacy;
+                    saveWorkStates();
+                }
+            }
+        }
+
+        function loadLegacyWorkStates() {
+            try {
+                const saved = localStorage.getItem('dlsiteWorkStates.v1');
+                const parsed = saved ? JSON.parse(saved) : {};
+                return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+            } catch (e) {
+                return {};
+            }
+        }
 
         async function loadCategories() {
             try {
@@ -1243,20 +1415,148 @@ def generate_html(total_works):
             }
         }
 
-        function loadWorkStates() {
-            try {
-                const saved = localStorage.getItem(WORK_STATE_KEY);
-                const parsed = saved ? JSON.parse(saved) : {};
-                return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-            } catch (e) {
-                return {};
+        function normalizeSearchText(value) {
+            return String(value || '').normalize('NFKC').toLowerCase().replace(/\\s+/g, ' ').trim();
+        }
+
+        function isSearchActive() {
+            return searchTerms.length > 0;
+        }
+
+        function invalidateSearchResults() {
+            searchResultEntries = null;
+        }
+
+        function updateSearchClearButton() {
+            const btn = document.getElementById('searchClear');
+            if (!btn) return;
+            btn.classList.toggle('visible', Boolean(document.getElementById('searchInput').value.trim()));
+        }
+
+        function queueSearch(value) {
+            updateSearchClearButton();
+            clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = setTimeout(() => applySearch(value), 140);
+        }
+
+        async function clearSearch() {
+            const input = document.getElementById('searchInput');
+            input.value = '';
+            updateSearchClearButton();
+            await applySearch('');
+        }
+
+        async function applySearch(value) {
+            const nextQuery = normalizeSearchText(value);
+            if (nextQuery === searchQuery) return;
+
+            searchQuery = nextQuery;
+            searchTerms = searchQuery ? searchQuery.split(' ').filter(Boolean) : [];
+            invalidateSearchResults();
+            currentPage = 1;
+            await goToPage(1, true);
+        }
+
+        async function loadSearchIndex() {
+            if (searchIndex) return searchIndex;
+            if (searchIndexPromise) return searchIndexPromise;
+
+            searchIndexPromise = fetch('data/search_index.json')
+                .then((resp) => resp.ok ? resp.json() : [])
+                .then((data) => Array.isArray(data) ? data : [])
+                .catch(() => []);
+
+            searchIndex = await searchIndexPromise;
+            return searchIndex;
+        }
+
+        function entryMatchesSearchContext(entry) {
+            if (hasActiveWorkTypeFilters() && !activeWorkTypes.includes(entry.kind || '游戏')) {
+                return false;
             }
+
+            const state = getWorkState(entry.product_id);
+            if (isStatusCategory()) {
+                if (state.preference !== currentCategory.status_filter) return false;
+            } else {
+                if (HIDDEN_PREFERENCES.includes(state.preference)) return false;
+                if (currentCategory && currentCategory.slug !== '__all__') {
+                    const entryCategories = Array.isArray(entry.categories) ? entry.categories : [];
+                    if (!entryCategories.includes(currentCategory.slug)) return false;
+                }
+            }
+
+            if (hideReadWorks && state.read) return false;
+            return true;
+        }
+
+        async function getSearchResults() {
+            if (searchResultEntries) return searchResultEntries;
+            if (!isSearchActive()) {
+                searchResultEntries = [];
+                return searchResultEntries;
+            }
+
+            const index = await loadSearchIndex();
+            searchResultEntries = index.filter((entry) => {
+                if (!entryMatchesSearchContext(entry)) return false;
+                const text = entry.text || '';
+                return searchTerms.every((term) => text.includes(term));
+            });
+            return searchResultEntries;
+        }
+
+        async function loadSearchSourcePage(page) {
+            if (!searchPageCache.has(page)) {
+                searchPageCache.set(
+                    page,
+                    fetch('data/json/page_' + page + '.json')
+                        .then((resp) => resp.ok ? resp.json() : [])
+                        .then((data) => Array.isArray(data) ? data : [])
+                        .catch(() => [])
+                );
+            }
+            return searchPageCache.get(page);
+        }
+
+        async function loadSearchPageData(page) {
+            const results = await getSearchResults();
+            currentTotalWorks = results.length;
+            currentTotalPages = Math.max(1, Math.ceil(results.length / ITEMS_PER_PAGE));
+
+            const start = (page - 1) * ITEMS_PER_PAGE;
+            const entries = results.slice(start, start + ITEMS_PER_PAGE);
+            const works = new Array(entries.length);
+            const grouped = new Map();
+
+            entries.forEach((entry, resultIndex) => {
+                if (!grouped.has(entry.page)) grouped.set(entry.page, []);
+                grouped.get(entry.page).push({ entry, resultIndex });
+            });
+
+            await Promise.all(Array.from(grouped.entries()).map(async ([sourcePage, items]) => {
+                const pageData = await loadSearchSourcePage(sourcePage);
+                items.forEach(({ entry, resultIndex }) => {
+                    works[resultIndex] = pageData[entry.index];
+                });
+            }));
+
+            return works.filter(Boolean);
+        }
+
+        function loadWorkStates() {
+            return fetch('/api/work-states')
+                .then(r => r.json())
+                .then(data => data && typeof data === 'object' && !Array.isArray(data) ? data : {})
+                .catch(() => ({}));
         }
 
         function saveWorkStates() {
-            try {
-                localStorage.setItem(WORK_STATE_KEY, JSON.stringify(workStates));
-            } catch (e) {}
+            fetch('/api/work-states', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(workStates)
+            }).catch(() => {});
         }
 
         function getWorkState(workId) {
@@ -1342,6 +1642,7 @@ def generate_html(total_works):
                 activeWorkTypes.push(workType);
             }
             renderWorkTypeButtons();
+            invalidateSearchResults();
             goToPage(1, true);
         }
 
@@ -1354,12 +1655,19 @@ def generate_html(total_works):
             currentAllData = null;
             currentAllDataPromise = null;
             activeWorkTypes = [];
+            invalidateSearchResults();
             renderWorkTypeButtons();
             await goToPage(1, true);
-            loadAllCategoryData();
+            if (!isSearchActive() && requiresFullDataFiltering()) {
+                loadAllCategoryData();
+            }
         }
 
         async function loadPageData(page) {
+            if (isSearchActive()) {
+                return await loadSearchPageData(page);
+            }
+
             const dataCategory = getDataCategory();
             const dataPath = dataCategory ? dataCategory.data_path : 'data/json/page_';
             if (requiresFullDataFiltering()) {
@@ -1509,6 +1817,7 @@ def generate_html(total_works):
             setWorkState(workId, state);
             saveWorkStates();
             renderCategorySelect();
+            invalidateSearchResults();
             await goToPage(currentPage, true);
         }
 
@@ -1520,6 +1829,7 @@ def generate_html(total_works):
             });
             saveWorkStates();
             renderCategorySelect();
+            invalidateSearchResults();
             await goToPage(currentPage, true);
         }
 
@@ -1531,12 +1841,14 @@ def generate_html(total_works):
             });
             saveWorkStates();
             renderCategorySelect();
+            invalidateSearchResults();
             await goToPage(currentPage, true);
         }
 
         async function toggleHideRead() {
             hideReadWorks = !hideReadWorks;
             updateFloatingControls();
+            invalidateSearchResults();
             await goToPage(1, true);
         }
 
@@ -1691,7 +2003,7 @@ def generate_html(total_works):
         }
 
         async function goToPage(page, keepScroll) {
-            const totalPages = requiresFullDataFiltering()
+            const totalPages = (isSearchActive() || requiresFullDataFiltering())
                 ? Number.MAX_SAFE_INTEGER
                 : (currentCategory ? currentCategory.pages : FALLBACK_TOTAL_PAGES);
             if (page < 1 || page > totalPages) return;
@@ -1705,15 +2017,22 @@ def generate_html(total_works):
             renderWorks();
             const meta = document.getElementById('categoryMeta');
             if (currentCategory && meta) {
-                const filterText = requiresFullDataFiltering() ? '（筛选后）' : '';
-                meta.textContent = currentTotalWorks + ' 个作品 / 共 ' + currentTotalPages + ' 页' + filterText;
+                if (isSearchActive()) {
+                    meta.textContent = currentTotalWorks + ' 个搜索结果 / 共 ' + currentTotalPages + ' 页';
+                } else {
+                    const filterText = requiresFullDataFiltering() ? '（筛选后）' : '';
+                    meta.textContent = currentTotalWorks + ' 个作品 / 共 ' + currentTotalPages + ' 页' + filterText;
+                }
             }
             if (!keepScroll) {
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             }
         }
 
-        loadCategories();
+        (async () => {
+            await initWorkStates();
+            loadCategories();
+        })();
     </script>
 </body>
 </html>'''
@@ -1898,6 +2217,7 @@ async def main():
     ]
 
     crawl_categories = load_crawl_categories(works_by_id)
+    write_search_index(works, crawl_categories)
     cleanup_stale_category_dirs({category["slug"] for category in crawl_categories})
 
     if crawl_categories:
