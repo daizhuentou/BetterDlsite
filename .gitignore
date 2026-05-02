@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+*.egg
+portable/
+
+# 爬取的数据（可重新生成）
+works/
+output/
+
+# 翻译相关文件
+待翻译/
+翻译稿/
+ai/
+
+# 运行时生成的文件
+crawl_results.json
+works_order.json
+url_history.json
+failed_works.md
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 日志和临时文件
+*.log
+*.tmp
+*.temp
+
+# 打包/分发
+dist/
+build/
+*.spec
