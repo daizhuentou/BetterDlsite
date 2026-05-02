@@ -184,40 +184,61 @@ def load_url_history():
 
 
 def save_url_history(urls):
+    history = load_url_history()
+    existing = set(history)
+    for url in urls:
+        if url not in existing:
+            history.append(url)
+            existing.add(url)
     with open(URL_HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(urls, f, ensure_ascii=False, indent=2)
+        json.dump(history, f, ensure_ascii=False, indent=2)
 
 
 def prompt_search_urls():
     history = load_url_history()
 
     if history:
-        print("检测到历史 URL 记录：")
+        print("历史 URL 记录：")
         for i, url in enumerate(history, 1):
             print(f"  [{i}] {url}")
         print()
-        print("输入 1 使用上次 URL，或直接输入新 URL：")
+        print("输入序号选择历史 URL（多个用逗号分隔，如 1,3,5），或直接输入新 URL：")
     else:
         print("请输入 DLsite 搜索/分类页 URL。每输入一个链接会加入队列，直接回车开始爬取。")
 
     urls = []
 
     while True:
-        url = input(f"URL {len(urls) + 1}: ").strip()
+        user_input = input(f"URL {len(urls) + 1}: ").strip()
 
-        if not url:
+        if not user_input:
             break
 
-        if url == "1" and history:
-            print(f"  使用历史 URL ({len(history)} 个)")
-            return history
+        if history and re.match(r'^[\d,\s]+$', user_input):
+            selected = []
+            for part in user_input.split(','):
+                part = part.strip()
+                if not part:
+                    continue
+                try:
+                    idx = int(part) - 1
+                    if 0 <= idx < len(history):
+                        selected.append(history[idx])
+                    else:
+                        print(f"  序号 {part} 超出范围")
+                except ValueError:
+                    pass
+            if selected:
+                print(f"  已选择 {len(selected)} 个历史 URL")
+                urls.extend(selected)
+            continue
 
-        urls.append(url)
-        print(f"  已加入队列 ({len(urls)}): {url}")
+        urls.append(user_input)
+        print(f"  已加入队列 ({len(urls)}): {user_input}")
 
     if not urls:
         if history:
-            print("  未输入新 URL，使用历史 URL。")
+            print("  未输入 URL，使用全部历史 URL。")
             return history
         print("  未输入 URL，使用脚本内置的默认 URL。")
         return [DEFAULT_URL]

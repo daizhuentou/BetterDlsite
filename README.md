@@ -24,6 +24,7 @@
 ├── open_page.py        # 启动本地展示页
 ├── cleanup_works.py    # 清理不在 crawl_results 中的 HTML
 ├── split_to_ai.py      # 分割待翻译文件到 ai 文件夹
+├── retry_failed.py     # 重试下载失败的作品
 ├── works/              # 爬取的 HTML 文件
 ├── 待翻译/             # 生成的待翻译稿件
 ├── 翻译稿/             # 翻译完成的稿件
