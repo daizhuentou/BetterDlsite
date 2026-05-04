@@ -17,7 +17,7 @@ CRAWL_RESULTS_FILE = BASE_DIR / "crawl_results.json"
 GENRE_LIST_FILE = BASE_DIR / "list.devtools"
 URL_HISTORY_FILE = BASE_DIR / "url_history.json"
 MAX_CONCURRENT = 100
-MAX_PAGES = 5  # 0 表示不限制；大于 0 表示本次最多爬取多少个搜索结果页
+MAX_PAGES = 0  # 0 表示不限制；大于 0 表示本次最多爬取多少个搜索结果页
 MAX_WORK_RETRIES = 3
 WORK_RETRY_DELAY = 0
 WORK_ID_PATTERN = r"(?:RJ|VJ)\d+"
@@ -214,6 +214,11 @@ def prompt_search_urls():
         if not user_input:
             break
 
+        if history and user_input.lower() == 'all':
+            print(f"  已选择全部 {len(history)} 个历史 URL")
+            urls.extend(history)
+            continue
+
         if history and re.match(r'^[\d,\s]+$', user_input):
             selected = []
             for part in user_input.split(','):
@@ -231,6 +236,10 @@ def prompt_search_urls():
             if selected:
                 print(f"  已选择 {len(selected)} 个历史 URL")
                 urls.extend(selected)
+            continue
+
+        if 'genre[0]' not in user_input:
+            print("  URL 无效：必须包含 genre[0] 参数（DLsite 分类页 URL）")
             continue
 
         urls.append(user_input)
