@@ -2254,7 +2254,7 @@ async def main():
         f.write(html)
     print(f"\n已生成: {OUTPUT_DIR / 'index.html'}")
 
-    print("\n完成！运行 open_page.py 查看结果。")
+    print("\n完成！运行 open_page.py 查看结果")
 
 
 if __name__ == "__main__":
