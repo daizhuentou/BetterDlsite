@@ -23,6 +23,7 @@ crawl_results.json
 works_order.json
 url_history.json
 failed_works.md
+asmr_subtitle_cache.json
 
 # IDE
 .idea/

@@ -9,9 +9,11 @@ import html as html_lib
 import shutil
 import time
 import unicodedata
+import os
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 
 BASE_DIR = Path(__file__).parent
@@ -29,9 +31,25 @@ TRANSLATED_DRAFT_DIR = BASE_DIR / "翻译稿"
 ORIG_DIR = DATA_DIR / "orig"
 CATEGORIES_FILE = DATA_DIR / "categories.json"
 SEARCH_INDEX_FILE = DATA_DIR / "search_index.json"
+FILTER_INDEX_DIR = DATA_DIR / "filter_index"
+ASMR_SUBTITLE_CACHE_FILE = BASE_DIR / "asmr_subtitle_cache.json"
 SLIDER_IMAGES_DIR = IMAGES_DIR / "slider"
 PARTS_IMAGES_DIR = IMAGES_DIR / "parts"
 MAX_CONCURRENT_IMAGES = 300  # 最大并发下载图片数量
+MAX_PARSE_WORKERS = min(12, max(4, (os.cpu_count() or 4)))
+PARSE_PROGRESS_INTERVAL = 500
+PAGE_WRITE_LOG_INTERVAL = 100
+IMAGE_SCAN_PROGRESS_INTERVAL = 1000
+IMAGE_INDEX_PROGRESS_INTERVAL = 20000
+ASMR_SUBTITLE_REFRESH = "--refresh-asmr-subtitles" in sys.argv
+ASMR_SUBTITLE_CONCURRENCY = 2
+ASMR_SUBTITLE_MAX_RETRIES = 8
+ASMR_SUBTITLE_RETRY_DELAY = 3
+ASMR_SUBTITLE_API_TEMPLATE = (
+    "https://api.asmr-200.com/api/search/{work_id}"
+    "?order=create_date&sort=desc&page=1&pageSize=20"
+    "&subtitle=1&includeTranslationWorks=true"
+)
 WORK_FILE_PATTERNS = ("RJ*.html", "VJ*.html")
 
 HEADERS = {
@@ -135,6 +153,57 @@ def get_image_filename(url, product_id, index=0, prefix=""):
     return f"{product_id}_{index}_{url_hash}{ext}"
 
 
+def output_relative_path(path):
+    return str(path.relative_to(OUTPUT_DIR)).replace("\\", "/")
+
+
+def get_image_cache_key(url):
+    url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+    ext = (Path(url.split("?")[0]).suffix or ".jpg").lower()
+    return url_hash, ext
+
+
+def build_reusable_image_index(image_dir, prefix):
+    image_index = {}
+    if not image_dir.exists():
+        return image_index
+
+    pattern = re.compile(
+        rf"_{re.escape(prefix)}_\d+_([0-9a-f]{{8}})(\.[^.]+)$",
+        re.IGNORECASE,
+    )
+    scanned = 0
+    for path in image_dir.iterdir():
+        scanned += 1
+        if not path.is_file():
+            continue
+        match = pattern.search(path.name)
+        if not match:
+            continue
+        key = (match.group(1).lower(), match.group(2).lower())
+        image_index.setdefault(key, output_relative_path(path))
+        if scanned % IMAGE_INDEX_PROGRESS_INTERVAL == 0:
+            sys.stdout.write(
+                f"\r建立 {prefix} 图片索引: 已扫描 {scanned} 个文件，索引 {len(image_index)} 张"
+            )
+            sys.stdout.flush()
+    if scanned:
+        sys.stdout.write(
+            f"\r建立 {prefix} 图片索引: 已扫描 {scanned} 个文件，索引 {len(image_index)} 张\n"
+        )
+        sys.stdout.flush()
+    return image_index
+
+
+def resolve_existing_image_path(url, product_id, index, prefix, image_dir, reusable_index):
+    fname = get_image_filename(url, product_id, index, prefix)
+    expected_path = image_dir / fname
+    if expected_path.exists():
+        return output_relative_path(expected_path)
+
+    return reusable_index.get(get_image_cache_key(url), "")
+
+
 def clean_html_text(value):
     value = re.sub(r'<br\s*/?>', '\n', value, flags=re.IGNORECASE)
     value = re.sub(r'<[^>]+>', '', value)
@@ -215,8 +284,14 @@ def extract_outline_values(outline_rows, headers):
 
 
 WORK_KIND_AUDIO_ASMR = "音声・ASMR"
+WORK_KIND_SUBTITLED_ASMR = "有字幕ASMR"
+WORK_KIND_UNSUBTITLED_ASMR = "无字幕ASMR"
 WORK_KIND_MANGA = "漫画"
 WORK_KIND_GAME = "游戏"
+VERSION_PRIORITY = {
+    "CHI_HANS": 0,
+    "CHI_HANT": 1,
+}
 
 
 def get_work_kind(work_types):
@@ -227,6 +302,238 @@ def get_work_kind(work_types):
         if any(keyword in normalized for keyword in ("マンガ", "漫画", "コミック")):
             return WORK_KIND_MANGA
     return WORK_KIND_GAME
+
+
+def is_audio_asmr_kind(work_kind):
+    return work_kind in (WORK_KIND_AUDIO_ASMR, WORK_KIND_SUBTITLED_ASMR, WORK_KIND_UNSUBTITLED_ASMR)
+
+
+def normalize_image_url(src):
+    src = html_lib.unescape(str(src or "")).replace("\\/", "/").strip()
+    if src.startswith("//"):
+        return "https:" + src
+    return src
+
+
+def add_unique_image(images, src):
+    src = normalize_image_url(src)
+    if not src or "img.dlsite.jp/" not in src or src in images:
+        return
+    images.append(src)
+
+
+def extract_language_editions(content):
+    if "data-language-editions" not in content:
+        return []
+
+    match = re.search(r"data-language-editions='([^']*)'", content, re.DOTALL)
+    if not match:
+        return []
+
+    raw = html_lib.unescape(match.group(1))
+    try:
+        editions = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    return editions if isinstance(editions, list) else []
+
+
+def get_current_language_edition(editions, product_id):
+    product_id = product_id.upper()
+    for edition in editions:
+        if not isinstance(edition, dict):
+            continue
+        if str(edition.get("workno", "")).upper() == product_id:
+            return edition
+    return {}
+
+
+def infer_language_from_name(work_name):
+    if "簡体中文" in work_name or "简体中文" in work_name:
+        return "CHI_HANS"
+    if "繁体中文" in work_name or "繁體中文" in work_name:
+        return "CHI_HANT"
+    return ""
+
+
+def build_version_info(product_id, work_name, editions):
+    current_edition = get_current_language_edition(editions, product_id)
+    version_ids = []
+    for edition in editions:
+        if not isinstance(edition, dict):
+            continue
+        workno = str(edition.get("workno", "")).strip()
+        if workno:
+            version_ids.append(workno.upper())
+    version_ids = unique_values(version_ids)
+
+    edition_id = current_edition.get("edition_id")
+    if edition_id is None:
+        for edition in editions:
+            if isinstance(edition, dict) and edition.get("edition_id") is not None:
+                edition_id = edition.get("edition_id")
+                break
+
+    if len(version_ids) > 1:
+        version_group_id = f"edition:{edition_id}" if edition_id is not None else "versions:" + ",".join(sorted(version_ids))
+    else:
+        version_group_id = product_id.upper()
+
+    language = str(current_edition.get("lang") or infer_language_from_name(work_name)).upper()
+    return {
+        "version_group_id": version_group_id,
+        "version_lang": language,
+        "version_label": current_edition.get("display_label", ""),
+        "version_ids": version_ids,
+        "version_rank": VERSION_PRIORITY.get(language, 2),
+    }
+
+
+def load_asmr_subtitle_cache():
+    if not ASMR_SUBTITLE_CACHE_FILE.exists():
+        return {}
+
+    try:
+        with open(ASMR_SUBTITLE_CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+    return data if isinstance(data, dict) else {}
+
+
+def save_asmr_subtitle_cache(cache):
+    with open(ASMR_SUBTITLE_CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2)
+
+
+def get_cached_asmr_subtitle(cache, work_id):
+    entry = cache.get(work_id.upper())
+    if isinstance(entry, dict) and entry.get("status") == "ok":
+        return bool(entry.get("has_subtitle"))
+    if isinstance(entry, bool):
+        return entry
+    return None
+
+
+def set_cached_asmr_subtitle(cache, work_id, has_subtitle):
+    cache[work_id.upper()] = {
+        "has_subtitle": bool(has_subtitle),
+        "status": "ok",
+        "checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+
+
+def build_asmr_subtitle_api_url(work_id):
+    return ASMR_SUBTITLE_API_TEMPLATE.format(work_id=quote(work_id.upper(), safe=""))
+
+
+def has_valid_asmr_subtitle_result(data, work_id):
+    if not isinstance(data, dict):
+        return False
+
+    works = data.get("works")
+    if not isinstance(works, list) or not works:
+        return False
+
+    normalized_id = work_id.upper()
+    for work in works:
+        if not isinstance(work, dict):
+            continue
+        for key in ("source_id", "workno", "work_id", "product_id", "dlsite_id"):
+            value = work.get(key)
+            if isinstance(value, str) and value.upper() == normalized_id:
+                return True
+
+    return True
+
+
+async def query_asmr_subtitle(session, work_id, cache, refresh_missing=False):
+    work_id = work_id.upper()
+    if not work_id.startswith("RJ"):
+        return False
+
+    cached = get_cached_asmr_subtitle(cache, work_id)
+    if cached is not None:
+        return cached
+    if not refresh_missing:
+        return None
+
+    url = build_asmr_subtitle_api_url(work_id)
+    for attempt in range(1, ASMR_SUBTITLE_MAX_RETRIES + 1):
+        try:
+            async with session.get(url, timeout=20) as resp:
+                if resp.status == 429 and attempt < ASMR_SUBTITLE_MAX_RETRIES:
+                    retry_after = resp.headers.get("Retry-After")
+                    try:
+                        wait_seconds = float(retry_after) if retry_after else ASMR_SUBTITLE_RETRY_DELAY * attempt
+                    except ValueError:
+                        wait_seconds = ASMR_SUBTITLE_RETRY_DELAY * attempt
+                    print(f"  字幕 API 限流: {work_id}，{wait_seconds:.1f} 秒后重试")
+                    await asyncio.sleep(wait_seconds)
+                    continue
+                if resp.status != 200:
+                    print(f"  字幕 API 状态异常: {work_id} HTTP {resp.status}")
+                    return None
+                data = await resp.json(content_type=None)
+                has_subtitle = has_valid_asmr_subtitle_result(data, work_id)
+                set_cached_asmr_subtitle(cache, work_id, has_subtitle)
+                return has_subtitle
+        except Exception as e:
+            if attempt < ASMR_SUBTITLE_MAX_RETRIES:
+                wait_seconds = ASMR_SUBTITLE_RETRY_DELAY * attempt
+                print(f"  字幕 API 查询失败: {work_id} - {e}，{wait_seconds:.1f} 秒后重试")
+                await asyncio.sleep(wait_seconds)
+                continue
+            print(f"  字幕 API 查询失败: {work_id} - {e}")
+            return None
+
+    return None
+
+
+async def refine_asmr_work_kinds(session, works, refresh_missing=False):
+    audio_works = [work for work in works if work.get("work_kind") == WORK_KIND_AUDIO_ASMR]
+    if not audio_works:
+        return
+
+    cache = load_asmr_subtitle_cache()
+    semaphore = asyncio.Semaphore(ASMR_SUBTITLE_CONCURRENCY)
+    completed = 0
+    subtitled = 0
+    unsubtitled = 0
+    unknown = 0
+
+    async def refine_one(work):
+        nonlocal completed, subtitled, unsubtitled, unknown
+        async with semaphore:
+            has_subtitle = await query_asmr_subtitle(
+                session,
+                work["product_id"],
+                cache,
+                refresh_missing=refresh_missing,
+            )
+            if has_subtitle is True:
+                work["work_kind"] = WORK_KIND_SUBTITLED_ASMR
+                subtitled += 1
+            elif has_subtitle is False:
+                work["work_kind"] = WORK_KIND_UNSUBTITLED_ASMR
+                unsubtitled += 1
+            else:
+                unknown += 1
+            completed += 1
+            if completed % 50 == 0 or completed == len(audio_works):
+                save_asmr_subtitle_cache(cache)
+                print(
+                    f"ASMR 字幕类型处理: {completed}/{len(audio_works)} "
+                    f"(有字幕 {subtitled}, 无字幕 {unsubtitled}, 未确认 {unknown})"
+                )
+
+    print(
+        f"开始细化音声 ASMR 作品类型: {len(audio_works)} 个 "
+        f"({'查询缺失缓存' if refresh_missing else '仅使用缓存'})"
+    )
+    await asyncio.gather(*(refine_one(work) for work in audio_works))
+    save_asmr_subtitle_cache(cache)
 
 
 def parse_html_file(filepath):
@@ -246,15 +553,29 @@ def parse_html_file(filepath):
     outline_rows = extract_work_outline_rows(content)
     work_types = extract_outline_values(outline_rows, ("作品形式",))
     work_kind = get_work_kind(work_types)
+    language_editions = extract_language_editions(content)
+    version_info = build_version_info(product_id, work_name, language_editions)
 
     slider_images = []
     slider_block = re.search(r'class="product-slider-data">(.*?)</div>\s*<div\s+class="work_slider', content, re.DOTALL)
     if slider_block:
         for m in re.finditer(r'data-src="(//img\.dlsite\.jp/[^"]+)"', slider_block.group(1)):
-            src = m.group(1)
-            if src.startswith("//"):
-                src = "https:" + src
-            slider_images.append(src)
+            add_unique_image(slider_images, m.group(1))
+
+    if not slider_images:
+        fallback_patterns = (
+            r'<translation-product-slider\b[^>]*\bsrc="([^"]+)"',
+            r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']',
+            r'<meta\s+name=["\']twitter:image:src["\']\s+content=["\']([^"\']+)["\']',
+            r'<meta\s+itemprop=["\']image["\']\s+content=["\']([^"\']+)["\']',
+            r'"image_main"\s*:\s*"([^"]+)"',
+        )
+        for pattern in fallback_patterns:
+            image_match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
+            if image_match:
+                add_unique_image(slider_images, image_match.group(1))
+                if slider_images:
+                    break
 
     parts = []
     spec_pos = content.find('<!-- spec -->')
@@ -324,8 +645,95 @@ def parse_html_file(filepath):
         "work_types": work_types,
         "work_kind": work_kind,
         "slider_images": slider_images,
-        "parts": parts
+        "parts": parts,
+        **version_info,
     }
+
+
+def share_version_group_images(works):
+    best_images_by_group = {}
+    for work in works:
+        group_id = work.get("version_group_id") or work["product_id"]
+        images = work.get("slider_images") or []
+        if not images:
+            continue
+        current_best = best_images_by_group.get(group_id, [])
+        if len(images) > len(current_best):
+            best_images_by_group[group_id] = images
+
+    filled = 0
+    for work in works:
+        group_id = work.get("version_group_id") or work["product_id"]
+        best_images = best_images_by_group.get(group_id)
+        if best_images and len(work.get("slider_images") or []) < len(best_images):
+            work["slider_images"] = list(best_images)
+            filled += 1
+
+    if filled:
+        print(f"已为 {filled} 个多版本作品复用同组封面/样品图")
+
+
+def format_seconds(seconds):
+    seconds = int(max(0, seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m{seconds}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes}m"
+
+
+def render_parse_progress(done, total, started_at, failed=0, force=False):
+    if not force and done % PARSE_PROGRESS_INTERVAL != 0 and done != total:
+        return
+
+    elapsed = max(0.001, time.time() - started_at)
+    speed = done / elapsed
+    remaining = max(0, total - done)
+    eta = remaining / speed if speed > 0 else 0
+    failed_text = f" 失败:{failed}" if failed else ""
+    line = (
+        f"\r解析HTML: {done}/{total} "
+        f"{done / max(1, total) * 100:5.1f}% "
+        f"{speed:.1f}/s ETA:{format_seconds(eta)}{failed_text}"
+    )
+    sys.stdout.write(line)
+    sys.stdout.flush()
+
+
+def parse_html_files(html_files):
+    total = len(html_files)
+    workers = min(MAX_PARSE_WORKERS, max(1, total))
+    print(f"开始解析 HTML: {total} 个，{workers} 个线程")
+
+    works = [None] * total
+    failed = 0
+    started_at = time.time()
+    render_parse_progress(0, total, started_at, force=True)
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {
+            executor.submit(parse_html_file, path): (idx, path)
+            for idx, path in enumerate(html_files)
+        }
+        for done, future in enumerate(as_completed(future_map), start=1):
+            idx, path = future_map[future]
+            try:
+                works[idx] = future.result()
+            except Exception as e:
+                failed += 1
+                sys.stdout.write("\n")
+                print(f"  跳过解析失败: {path.name} - {e}")
+            render_parse_progress(done, total, started_at, failed)
+
+    sys.stdout.write("\n")
+    parsed_works = [work for work in works if work is not None]
+    print(
+        f"HTML 解析完成: {len(parsed_works)}/{total} 个，"
+        f"耗时 {format_seconds(time.time() - started_at)}"
+    )
+    return parsed_works
 
 
 def clean_description(text):
@@ -405,6 +813,11 @@ def generate_page_json(works, page_num):
             "description": w["description_clean"],
             "work_types": w.get("work_types", []),
             "work_kind": w.get("work_kind", WORK_KIND_GAME),
+            "version_group_id": w.get("version_group_id", w["product_id"]),
+            "version_lang": w.get("version_lang", ""),
+            "version_label": w.get("version_label", ""),
+            "version_rank": w.get("version_rank", 2),
+            "version_ids": w.get("version_ids", []),
             "slider_images": w["local_slider_images"],
             "parts": deepcopy(w["parts"])
         }
@@ -558,16 +971,24 @@ def load_crawl_categories(works_by_id):
 
 def collect_work_kinds(works):
     kinds = {work.get("work_kind", WORK_KIND_GAME) for work in works}
-    return [kind for kind in (WORK_KIND_AUDIO_ASMR, WORK_KIND_MANGA, WORK_KIND_GAME) if kind in kinds]
+    order = (
+        WORK_KIND_SUBTITLED_ASMR,
+        WORK_KIND_UNSUBTITLED_ASMR,
+        WORK_KIND_AUDIO_ASMR,
+        WORK_KIND_MANGA,
+        WORK_KIND_GAME,
+    )
+    return [kind for kind in order if kind in kinds]
 
 
-def build_manifest_entry(name, slug, count, data_path, translate_path="", source_url="", updated_at="", work_kinds=None):
+def build_manifest_entry(name, slug, count, data_path, translate_path="", source_url="", updated_at="", work_kinds=None, index_path=""):
     return {
         "name": name,
         "slug": slug,
         "count": count,
         "pages": max(1, math.ceil(count / ITEMS_PER_PAGE)),
         "data_path": data_path,
+        "index_path": index_path,
         "translate_path": translate_path,
         "source_url": source_url,
         "updated_at": updated_at,
@@ -588,14 +1009,37 @@ def write_paged_outputs(works, json_dir, label):
         page_json = generate_page_json(works, page)
         json_path = json_dir / f"page_{page}.json"
         with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(page_json, f, ensure_ascii=False, indent=2)
+            json.dump(page_json, f, ensure_ascii=False, separators=(",", ":"))
 
-        print(
-            f"  {label} 第 {page}/{total_pages} 页: {len(page_works)} 个作品 "
-            f"-> {json_path.relative_to(OUTPUT_DIR)}"
-        )
+        if page == 1 or page == total_pages or page % PAGE_WRITE_LOG_INTERVAL == 0:
+            print(
+                f"  {label} 第 {page}/{total_pages} 页: {len(page_works)} 个作品 "
+                f"-> {json_path.relative_to(OUTPUT_DIR)}"
+            )
 
     return total_pages
+
+
+def write_filter_index(works, index_path, label):
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index = []
+    for idx, work in enumerate(works):
+        index.append({
+            "product_id": work["product_id"],
+            "page": idx // ITEMS_PER_PAGE + 1,
+            "index": idx % ITEMS_PER_PAGE,
+            "kind": work.get("work_kind", WORK_KIND_GAME),
+            "version_group_id": work.get("version_group_id", work["product_id"]),
+            "version_rank": work.get("version_rank", 2),
+        })
+
+    with open(index_path, "w", encoding="utf-8") as f:
+        json.dump(index, f, ensure_ascii=False, separators=(",", ":"))
+
+    print(
+        f"  {label} 筛选索引: {len(index)} 个作品 "
+        f"-> {index_path.relative_to(OUTPUT_DIR)}"
+    )
 
 
 def normalize_search_text(value):
@@ -610,6 +1054,8 @@ def build_search_text(work):
         work.get("maker_name", ""),
         work.get("description_clean", ""),
         work.get("work_kind", WORK_KIND_GAME),
+        work.get("version_lang", ""),
+        work.get("version_label", ""),
     ]
     values.extend(work.get("work_types", []))
     return normalize_search_text(" ".join(values))
@@ -632,12 +1078,14 @@ def write_search_index(works, crawl_categories):
             "page": idx // ITEMS_PER_PAGE + 1,
             "index": idx % ITEMS_PER_PAGE,
             "kind": work.get("work_kind", WORK_KIND_GAME),
+            "version_group_id": work.get("version_group_id", work_id),
+            "version_rank": work.get("version_rank", 2),
             "categories": sorted(categories_by_work_id.get(work_id, set())),
             "text": build_search_text(work),
         })
 
     with open(SEARCH_INDEX_FILE, "w", encoding="utf-8") as f:
-        json.dump(index, f, ensure_ascii=False)
+        json.dump(index, f, ensure_ascii=False, separators=(",", ":"))
     print(f"搜索索引已生成: {SEARCH_INDEX_FILE} ({len(index)} 个作品)")
 
 
@@ -651,6 +1099,18 @@ def cleanup_stale_category_dirs(valid_slugs):
 
         shutil.rmtree(path)
         print(f"  已移除旧分类数据: {path.relative_to(OUTPUT_DIR)}")
+
+
+def cleanup_stale_filter_indexes(valid_slugs):
+    if not FILTER_INDEX_DIR.exists():
+        return
+
+    valid_files = {"__all__.json"} | {f"{slug}.json" for slug in valid_slugs}
+    for path in FILTER_INDEX_DIR.glob("*.json"):
+        if path.name in valid_files:
+            continue
+        path.unlink()
+        print(f"  已移除旧筛选索引: {path.relative_to(OUTPUT_DIR)}")
 
 
 def find_work_html_files():
@@ -1308,6 +1768,7 @@ def generate_html(total_works):
         <button class="floating-btn" onclick="markCurrentPageRead()">本页已阅</button>
         <button class="floating-btn secondary" onclick="unmarkCurrentPageRead()">取消本页已阅</button>
         <button class="floating-btn secondary" id="hideReadToggle" onclick="toggleHideRead()">隐藏已阅：关</button>
+        <button class="floating-btn secondary" id="showAllVersionsToggle" onclick="toggleShowAllVersions()">全部版本：关</button>
     </div>
     <div class="modal" id="imageModal" onclick="closeModal()">
         <span class="modal-close">&times;</span>
@@ -1321,19 +1782,20 @@ def generate_html(total_works):
         let currentCategory = null;
         let currentPage = 1;
         let currentData = null;
-        let currentAllData = null;
-        let currentAllDataPromise = null;
+        let indexedResultEntries = null;
         let searchIndex = null;
         let searchIndexPromise = null;
         let searchQuery = '';
         let searchTerms = [];
         let searchDebounceTimer = null;
         let searchResultEntries = null;
-        const searchPageCache = new Map();
+        const pageDataCache = new Map();
+        const filterIndexCache = new Map();
         let currentTotalWorks = FALLBACK_TOTAL_WORKS;
         let currentTotalPages = FALLBACK_TOTAL_PAGES;
         let activeWorkTypes = [];
         let hideReadWorks = false;
+        let showAllVersions = localStorage.getItem('dlsiteShowAllVersions.v1') === '1';
         const STATUS_CATEGORY_LIKED = '__liked__';
         const STATUS_CATEGORY_DISLIKED = '__disliked__';
         const STATUS_CATEGORY_PLAYED = '__played__';
@@ -1383,7 +1845,8 @@ def generate_html(total_works):
                     count: FALLBACK_TOTAL_WORKS,
                     pages: FALLBACK_TOTAL_PAGES,
                     data_path: 'data/json/page_',
-                    work_kinds: ['音声・ASMR', '漫画', '游戏']
+                    index_path: 'data/filter_index/__all__.json',
+                    work_kinds: ['有字幕ASMR', '无字幕ASMR', '音声・ASMR', '漫画', '游戏']
                 }];
             }
 
@@ -1425,6 +1888,7 @@ def generate_html(total_works):
 
         function invalidateSearchResults() {
             searchResultEntries = null;
+            indexedResultEntries = null;
         }
 
         function updateSearchClearButton() {
@@ -1470,7 +1934,38 @@ def generate_html(total_works):
             return searchIndex;
         }
 
-        function entryMatchesSearchContext(entry) {
+        async function loadDataPage(dataPath, page) {
+            const key = dataPath + page;
+            if (!pageDataCache.has(key)) {
+                pageDataCache.set(
+                    key,
+                    fetch(dataPath + page + '.json')
+                        .then((resp) => resp.ok ? resp.json() : [])
+                        .then((data) => Array.isArray(data) ? data : [])
+                        .catch(() => [])
+                );
+            }
+            return pageDataCache.get(key);
+        }
+
+        async function loadCurrentFilterIndex() {
+            const dataCategory = getDataCategory();
+            const indexPath = dataCategory && dataCategory.index_path ? dataCategory.index_path : '';
+            if (!indexPath) return [];
+
+            if (!filterIndexCache.has(indexPath)) {
+                filterIndexCache.set(
+                    indexPath,
+                    fetch(indexPath)
+                        .then((resp) => resp.ok ? resp.json() : [])
+                        .then((data) => Array.isArray(data) ? data : [])
+                        .catch(() => [])
+                );
+            }
+            return filterIndexCache.get(indexPath);
+        }
+
+        function entryMatchesIndexedContext(entry) {
             if (hasActiveWorkTypeFilters() && !activeWorkTypes.includes(entry.kind || '游戏')) {
                 return false;
             }
@@ -1478,15 +1973,51 @@ def generate_html(total_works):
             const state = getWorkState(entry.product_id);
             if (isStatusCategory()) {
                 if (state.preference !== currentCategory.status_filter) return false;
-            } else {
-                if (HIDDEN_PREFERENCES.includes(state.preference)) return false;
+            } else if (HIDDEN_PREFERENCES.includes(state.preference)) {
+                return false;
+            }
+
+            if (hideReadWorks && state.read) return false;
+            return true;
+        }
+
+        function compareVersionEntries(a, b) {
+            const rankA = Number.isFinite(Number(a.version_rank)) ? Number(a.version_rank) : 2;
+            const rankB = Number.isFinite(Number(b.version_rank)) ? Number(b.version_rank) : 2;
+            if (rankA !== rankB) return rankA - rankB;
+            if (a.page !== b.page) return a.page - b.page;
+            return a.index - b.index;
+        }
+
+        function dedupeVersionEntries(entries) {
+            if (showAllVersions) return entries;
+
+            const grouped = new Map();
+            entries.forEach((entry, order) => {
+                const key = entry.version_group_id || entry.product_id;
+                const current = grouped.get(key);
+                if (!current) {
+                    grouped.set(key, { firstOrder: order, entry });
+                    return;
+                }
+                if (compareVersionEntries(entry, current.entry) < 0) {
+                    current.entry = entry;
+                }
+            });
+
+            return Array.from(grouped.values())
+                .sort((a, b) => a.firstOrder - b.firstOrder)
+                .map((item) => item.entry);
+        }
+
+        function entryMatchesSearchContext(entry) {
+            if (!entryMatchesIndexedContext(entry)) return false;
+            if (!isStatusCategory()) {
                 if (currentCategory && currentCategory.slug !== '__all__') {
                     const entryCategories = Array.isArray(entry.categories) ? entry.categories : [];
                     if (!entryCategories.includes(currentCategory.slug)) return false;
                 }
             }
-
-            if (hideReadWorks && state.read) return false;
             return true;
         }
 
@@ -1498,25 +2029,16 @@ def generate_html(total_works):
             }
 
             const index = await loadSearchIndex();
-            searchResultEntries = index.filter((entry) => {
+            searchResultEntries = dedupeVersionEntries(index.filter((entry) => {
                 if (!entryMatchesSearchContext(entry)) return false;
                 const text = entry.text || '';
                 return searchTerms.every((term) => text.includes(term));
-            });
+            }));
             return searchResultEntries;
         }
 
         async function loadSearchSourcePage(page) {
-            if (!searchPageCache.has(page)) {
-                searchPageCache.set(
-                    page,
-                    fetch('data/json/page_' + page + '.json')
-                        .then((resp) => resp.ok ? resp.json() : [])
-                        .then((data) => Array.isArray(data) ? data : [])
-                        .catch(() => [])
-                );
-            }
-            return searchPageCache.get(page);
+            return loadDataPage('data/json/page_', page);
         }
 
         async function loadSearchPageData(page) {
@@ -1536,6 +2058,40 @@ def generate_html(total_works):
 
             await Promise.all(Array.from(grouped.entries()).map(async ([sourcePage, items]) => {
                 const pageData = await loadSearchSourcePage(sourcePage);
+                items.forEach(({ entry, resultIndex }) => {
+                    works[resultIndex] = pageData[entry.index];
+                });
+            }));
+
+            return works.filter(Boolean);
+        }
+
+        async function getIndexedResults() {
+            if (indexedResultEntries) return indexedResultEntries;
+            const index = await loadCurrentFilterIndex();
+            indexedResultEntries = dedupeVersionEntries(index.filter(entryMatchesIndexedContext));
+            return indexedResultEntries;
+        }
+
+        async function loadIndexedPageData(page) {
+            const results = await getIndexedResults();
+            currentTotalWorks = results.length;
+            currentTotalPages = Math.max(1, Math.ceil(results.length / ITEMS_PER_PAGE));
+
+            const dataCategory = getDataCategory();
+            const dataPath = dataCategory ? dataCategory.data_path : 'data/json/page_';
+            const start = (page - 1) * ITEMS_PER_PAGE;
+            const entries = results.slice(start, start + ITEMS_PER_PAGE);
+            const works = new Array(entries.length);
+            const grouped = new Map();
+
+            entries.forEach((entry, resultIndex) => {
+                if (!grouped.has(entry.page)) grouped.set(entry.page, []);
+                grouped.get(entry.page).push({ entry, resultIndex });
+            });
+
+            await Promise.all(Array.from(grouped.entries()).map(async ([sourcePage, items]) => {
+                const pageData = await loadDataPage(dataPath, sourcePage);
                 items.forEach(({ entry, resultIndex }) => {
                     works[resultIndex] = pageData[entry.index];
                 });
@@ -1652,15 +2208,10 @@ def generate_html(total_works):
                 : (categories.find((category) => category.slug === slug) || categories[0]);
             document.getElementById('categorySelect').value = currentCategory.slug;
             currentPage = 1;
-            currentAllData = null;
-            currentAllDataPromise = null;
             activeWorkTypes = [];
             invalidateSearchResults();
             renderWorkTypeButtons();
             await goToPage(1, true);
-            if (!isSearchActive() && requiresFullDataFiltering()) {
-                loadAllCategoryData();
-            }
         }
 
         async function loadPageData(page) {
@@ -1671,22 +2222,17 @@ def generate_html(total_works):
             const dataCategory = getDataCategory();
             const dataPath = dataCategory ? dataCategory.data_path : 'data/json/page_';
             if (requiresFullDataFiltering()) {
-                const allData = await loadAllCategoryData();
-                const filtered = allData.filter(shouldShowWork);
-                currentTotalWorks = filtered.length;
-                currentTotalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE));
-                const start = (page - 1) * ITEMS_PER_PAGE;
-                return filtered.slice(start, start + ITEMS_PER_PAGE);
+                return await loadIndexedPageData(page);
             }
 
             currentTotalWorks = dataCategory ? dataCategory.count : FALLBACK_TOTAL_WORKS;
             currentTotalPages = dataCategory ? dataCategory.pages : FALLBACK_TOTAL_PAGES;
-            const resp = await fetch(dataPath + page + '.json');
-            if (!resp.ok) {
+            const pageData = await loadDataPage(dataPath, page);
+            if (!Array.isArray(pageData)) {
                 console.error('加载第 ' + page + ' 页数据失败');
                 return null;
             }
-            return await resp.json();
+            return pageData;
         }
 
         function hasActiveWorkTypeFilters() {
@@ -1694,58 +2240,7 @@ def generate_html(total_works):
         }
 
         function requiresFullDataFiltering() {
-            return hasActiveWorkTypeFilters() || isStatusCategory() || hasPreferenceStates() || hideReadWorks;
-        }
-
-        function matchesWorkTypes(work) {
-            if (!hasActiveWorkTypeFilters()) return true;
-            return activeWorkTypes.includes(work.work_kind || '游戏');
-        }
-
-        function shouldShowWork(work) {
-            if (!matchesWorkTypes(work)) return false;
-
-            const state = getWorkState(work.product_id);
-            if (isStatusCategory()) {
-                if (state.preference !== currentCategory.status_filter) return false;
-            } else if (HIDDEN_PREFERENCES.includes(state.preference)) {
-                return false;
-            }
-
-            if (hideReadWorks && state.read) return false;
-            return true;
-        }
-
-        async function loadAllCategoryData() {
-            if (currentAllData) return currentAllData;
-            if (currentAllDataPromise) return currentAllDataPromise;
-
-            const dataCategory = getDataCategory();
-            const dataPath = dataCategory ? dataCategory.data_path : 'data/json/page_';
-            const totalPages = dataCategory ? dataCategory.pages : FALLBACK_TOTAL_PAGES;
-
-            currentAllDataPromise = (async () => {
-                const fetchPromises = [];
-                for (let page = 1; page <= totalPages; page++) {
-                    fetchPromises.push(
-                        fetch(dataPath + page + '.json')
-                            .then(resp => resp.ok ? resp.json() : null)
-                            .catch(() => null)
-                    );
-                }
-
-                const results = await Promise.all(fetchPromises);
-                const allData = [];
-                for (const pageData of results) {
-                    if (Array.isArray(pageData)) {
-                        allData.push(...pageData);
-                    }
-                }
-                return allData;
-            })();
-
-            currentAllData = await currentAllDataPromise;
-            return currentAllData;
+            return !showAllVersions || hasActiveWorkTypeFilters() || isStatusCategory() || hasPreferenceStates() || hideReadWorks;
         }
 
         function copyText(text, btn) {
@@ -1781,6 +2276,14 @@ def generate_html(total_works):
             if (e.key === 'Escape') closeModal();
         });
 
+        function hydrateCarouselSlide(slide) {
+            if (!slide) return;
+            const img = slide.querySelector('img[data-src]');
+            if (!img) return;
+            img.src = img.dataset.src;
+            img.removeAttribute('data-src');
+        }
+
         function slideImages(card, direction) {
             const track = card.querySelector('.carousel-track');
             const slides = track.querySelectorAll('.carousel-slide');
@@ -1789,6 +2292,7 @@ def generate_html(total_works):
             current += direction;
             if (current < 0) current = total - 1;
             if (current >= total) current = 0;
+            hydrateCarouselSlide(slides[current]);
             track.dataset.current = current;
             track.style.transform = 'translateX(-' + (current * 100) + '%)';
             const counter = card.querySelector('.carousel-counter');
@@ -1852,11 +2356,25 @@ def generate_html(total_works):
             await goToPage(1, true);
         }
 
+        async function toggleShowAllVersions() {
+            showAllVersions = !showAllVersions;
+            localStorage.setItem('dlsiteShowAllVersions.v1', showAllVersions ? '1' : '0');
+            updateFloatingControls();
+            invalidateSearchResults();
+            await goToPage(1, true);
+        }
+
         function updateFloatingControls() {
-            const btn = document.getElementById('hideReadToggle');
-            if (!btn) return;
-            btn.textContent = hideReadWorks ? '隐藏已阅：开' : '隐藏已阅：关';
-            btn.classList.toggle('active', hideReadWorks);
+            const hideBtn = document.getElementById('hideReadToggle');
+            if (hideBtn) {
+                hideBtn.textContent = hideReadWorks ? '隐藏已阅：开' : '隐藏已阅：关';
+                hideBtn.classList.toggle('active', hideReadWorks);
+            }
+            const versionBtn = document.getElementById('showAllVersionsToggle');
+            if (versionBtn) {
+                versionBtn.textContent = showAllVersions ? '全部版本：开' : '全部版本：关';
+                versionBtn.classList.toggle('active', showAllVersions);
+            }
         }
 
         function renderWorks() {
@@ -1878,8 +2396,11 @@ def generate_html(total_works):
                 card.className = 'work-card';
 
                 let imagesHtml = '';
-                work.slider_images.forEach((img) => {
-                    imagesHtml += '<div class="carousel-slide"><img loading="lazy" src="' + img + '" alt="' + escapeHtml(work.work_name) + '" onclick="openModal(this.src)"></div>';
+                work.slider_images.forEach((img, imageIndex) => {
+                    const imageAttr = imageIndex === 0
+                        ? 'src="' + escapeHtml(img) + '"'
+                        : 'data-src="' + escapeHtml(img) + '"';
+                    imagesHtml += '<div class="carousel-slide"><img loading="lazy" decoding="async" ' + imageAttr + ' alt="' + escapeHtml(work.work_name) + '" onclick="openModal(this.src)"></div>';
                 });
 
                 let counterHtml = work.slider_images.length > 1
@@ -2041,16 +2562,35 @@ def generate_html(total_works):
 async def download_all_images(session, works):
     """异步下载所有图片"""
     all_download_tasks = []
+    reused_slider_paths = {}
+    reused_part_paths = {}
     skipped_count = 0
+
+    print("\n建立已有图片索引...")
+    slider_image_index = build_reusable_image_index(SLIDER_IMAGES_DIR, "slider")
+    parts_image_index = build_reusable_image_index(PARTS_IMAGES_DIR, "parts")
+    print(f"已有图片索引: slider {len(slider_image_index)} 张，parts {len(parts_image_index)} 张")
+
+    scan_started_at = time.time()
+    total_works = len(works)
     
-    for work in works:
+    for scan_idx, work in enumerate(works, start=1):
         work["description_clean"] = clean_description(work["description"])
         
         for i, img_url in enumerate(work["slider_images"]):
             fname = get_image_filename(img_url, work["product_id"], i, "slider")
             save_path = SLIDER_IMAGES_DIR / fname
-            if save_path.exists():
+            existing_path = resolve_existing_image_path(
+                img_url,
+                work["product_id"],
+                i,
+                "slider",
+                SLIDER_IMAGES_DIR,
+                slider_image_index,
+            )
+            if existing_path:
                 skipped_count += 1
+                reused_slider_paths[(work["product_id"], i)] = existing_path
             else:
                 all_download_tasks.append({
                     "type": "slider",
@@ -2064,8 +2604,17 @@ async def download_all_images(session, works):
             if part["type"] == "image" and part.get("src"):
                 fname = get_image_filename(part["src"], work["product_id"], pi, "parts")
                 save_path = PARTS_IMAGES_DIR / fname
-                if save_path.exists():
+                existing_path = resolve_existing_image_path(
+                    part["src"],
+                    work["product_id"],
+                    pi,
+                    "parts",
+                    PARTS_IMAGES_DIR,
+                    parts_image_index,
+                )
+                if existing_path:
                     skipped_count += 1
+                    reused_part_paths[(work["product_id"], pi)] = existing_path
                 else:
                     all_download_tasks.append({
                         "type": "part",
@@ -2075,6 +2624,21 @@ async def download_all_images(session, works):
                         "save_path": save_path,
                         "part": part
                     })
+
+        if scan_idx % IMAGE_SCAN_PROGRESS_INTERVAL == 0 or scan_idx == total_works:
+            elapsed = max(0.001, time.time() - scan_started_at)
+            speed = scan_idx / elapsed
+            remaining = max(0, total_works - scan_idx)
+            eta = remaining / speed if speed > 0 else 0
+            sys.stdout.write(
+                f"\r扫描作品图片: {scan_idx}/{total_works} "
+                f"{scan_idx / max(1, total_works) * 100:5.1f}% "
+                f"{speed:.1f}/s ETA:{format_seconds(eta)} "
+                f"跳过:{skipped_count} 待下:{len(all_download_tasks)}"
+            )
+            sys.stdout.flush()
+
+    sys.stdout.write("\n")
     
     total_images = len(all_download_tasks) + skipped_count
     print(f"\n共 {total_images} 张图片，跳过已下载 {skipped_count} 张，需下载 {len(all_download_tasks)} 张")
@@ -2084,15 +2648,21 @@ async def download_all_images(session, works):
         for work in works:
             local_slider = []
             for i, img_url in enumerate(work["slider_images"]):
-                fname = get_image_filename(img_url, work["product_id"], i, "slider")
-                save_path = SLIDER_IMAGES_DIR / fname
-                local_slider.append(str(save_path.relative_to(OUTPUT_DIR)).replace("\\", "/"))
+                existing_path = reused_slider_paths.get((work["product_id"], i))
+                if not existing_path:
+                    fname = get_image_filename(img_url, work["product_id"], i, "slider")
+                    save_path = SLIDER_IMAGES_DIR / fname
+                    existing_path = output_relative_path(save_path)
+                local_slider.append(existing_path)
             work["local_slider_images"] = local_slider
             for pi, part in enumerate(work["parts"]):
                 if part["type"] == "image" and part.get("src"):
-                    fname = get_image_filename(part["src"], work["product_id"], pi, "parts")
-                    save_path = PARTS_IMAGES_DIR / fname
-                    part["local_path"] = str(save_path.relative_to(OUTPUT_DIR)).replace("\\", "/")
+                    existing_path = reused_part_paths.get((work["product_id"], pi))
+                    if not existing_path:
+                        fname = get_image_filename(part["src"], work["product_id"], pi, "parts")
+                        save_path = PARTS_IMAGES_DIR / fname
+                        existing_path = output_relative_path(save_path)
+                    part["local_path"] = existing_path
         return works
     
     progress_bar = DownloadProgressBar(len(all_download_tasks), desc="下载图片")
@@ -2137,26 +2707,34 @@ async def download_all_images(session, works):
             for i, img_url in enumerate(work["slider_images"]):
                 if i in existing_paths:
                     local_slider.append(existing_paths[i])
+                elif (work["product_id"], i) in reused_slider_paths:
+                    local_slider.append(reused_slider_paths[(work["product_id"], i)])
                 else:
                     fname = get_image_filename(img_url, work["product_id"], i, "slider")
                     save_path = SLIDER_IMAGES_DIR / fname
-                    local_slider.append(str(save_path.relative_to(OUTPUT_DIR)).replace("\\", "/"))
+                    local_slider.append(output_relative_path(save_path))
             work["local_slider_images"] = local_slider
         else:
             # 全部已跳过
             local_slider = []
             for i, img_url in enumerate(work["slider_images"]):
-                fname = get_image_filename(img_url, work["product_id"], i, "slider")
-                save_path = SLIDER_IMAGES_DIR / fname
-                local_slider.append(str(save_path.relative_to(OUTPUT_DIR)).replace("\\", "/"))
+                existing_path = reused_slider_paths.get((work["product_id"], i))
+                if not existing_path:
+                    fname = get_image_filename(img_url, work["product_id"], i, "slider")
+                    save_path = SLIDER_IMAGES_DIR / fname
+                    existing_path = output_relative_path(save_path)
+                local_slider.append(existing_path)
             work["local_slider_images"] = local_slider
         
         # 填充已跳过的 parts 图片路径
         for pi, part in enumerate(work["parts"]):
             if part["type"] == "image" and part.get("src") and "local_path" not in part:
-                fname = get_image_filename(part["src"], work["product_id"], pi, "parts")
-                save_path = PARTS_IMAGES_DIR / fname
-                part["local_path"] = str(save_path.relative_to(OUTPUT_DIR)).replace("\\", "/")
+                existing_path = reused_part_paths.get((work["product_id"], pi))
+                if not existing_path:
+                    fname = get_image_filename(part["src"], work["product_id"], pi, "parts")
+                    save_path = PARTS_IMAGES_DIR / fname
+                    existing_path = output_relative_path(save_path)
+                part["local_path"] = existing_path
     
     return works
 
@@ -2165,6 +2743,7 @@ async def main():
     SLIDER_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     PARTS_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     JSON_DIR.mkdir(parents=True, exist_ok=True)
+    FILTER_INDEX_DIR.mkdir(parents=True, exist_ok=True)
     TRANSLATE_DIR.mkdir(parents=True, exist_ok=True)
     ORIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -2188,14 +2767,13 @@ async def main():
 
     print(f"找到 {len(html_files)} 个HTML文件\n")
 
-    works = []
-    for f in html_files:
-        work = parse_html_file(f)
-        works.append(work)
+    works = parse_html_files(html_files)
+    share_version_group_images(works)
     
     # 异步下载所有图片
     connector = aiohttp.TCPConnector(limit=MAX_CONCURRENT_IMAGES)
     async with aiohttp.ClientSession(headers=HEADERS, connector=connector) as session:
+        await refine_asmr_work_kinds(session, works, refresh_missing=ASMR_SUBTITLE_REFRESH)
         works = await download_all_images(session, works)
 
     total_pages = math.ceil(len(works) / ITEMS_PER_PAGE)
@@ -2203,6 +2781,7 @@ async def main():
 
     write_work_markdown_files(works)
     write_paged_outputs(works, JSON_DIR, "全部作品")
+    write_filter_index(works, FILTER_INDEX_DIR / "__all__.json", "全部作品")
 
     works_by_id = {work["product_id"]: work for work in works}
     manifest = [
@@ -2213,12 +2792,14 @@ async def main():
             "data/json/page_",
             "data/translate/",
             work_kinds=collect_work_kinds(works),
+            index_path="data/filter_index/__all__.json",
         )
     ]
 
     crawl_categories = load_crawl_categories(works_by_id)
     write_search_index(works, crawl_categories)
     cleanup_stale_category_dirs({category["slug"] for category in crawl_categories})
+    cleanup_stale_filter_indexes({category["slug"] for category in crawl_categories})
 
     if crawl_categories:
         print(f"\n检测到 {len(crawl_categories)} 个爬取分类，开始生成分类数据")
@@ -2232,6 +2813,11 @@ async def main():
             json_dir,
             category["name"],
         )
+        write_filter_index(
+            category_works,
+            FILTER_INDEX_DIR / f"{category['slug']}.json",
+            category["name"],
+        )
 
         manifest.append(build_manifest_entry(
             category["name"],
@@ -2242,6 +2828,7 @@ async def main():
             category.get("source_url", ""),
             category.get("updated_at", ""),
             collect_work_kinds(category_works),
+            index_path=f"data/filter_index/{category['slug']}.json",
         ))
 
     with open(CATEGORIES_FILE, "w", encoding="utf-8") as f:

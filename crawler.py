@@ -6,7 +6,7 @@ import aiohttp
 import html as html_lib
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 
 BASE_DIR = Path(__file__).parent
@@ -16,12 +16,26 @@ ORDER_FILE = BASE_DIR / "works_order.json"
 CRAWL_RESULTS_FILE = BASE_DIR / "crawl_results.json"
 GENRE_LIST_FILE = BASE_DIR / "list.devtools"
 URL_HISTORY_FILE = BASE_DIR / "url_history.json"
+ASMR_SUBTITLE_CACHE_FILE = BASE_DIR / "asmr_subtitle_cache.json"
 MAX_CONCURRENT = 100
 MAX_PAGES = 0  # 0 表示不限制；大于 0 表示本次最多爬取多少个搜索结果页
 MAX_WORK_RETRIES = 3
 WORK_RETRY_DELAY = 0
 WORK_ID_PATTERN = r"(?:RJ|VJ)\d+"
 _GENRE_NAME_MAP = None
+ASMR_SUBTITLE_FILTER_FLAGS = {
+    "--subtitle-asmr-only",
+    "--only-subtitle-asmr",
+    "--asmr-subtitle-only",
+}
+ASMR_SUBTITLE_API_TEMPLATE = (
+    "https://api.asmr-200.com/api/search/{work_id}"
+    "?order=create_date&sort=desc&page=1&pageSize=20"
+    "&subtitle=1&includeTranslationWorks=true"
+)
+ASMR_SUBTITLE_CONCURRENCY = 2
+ASMR_SUBTITLE_MAX_RETRIES = 8
+ASMR_SUBTITLE_RETRY_DELAY = 3
 
 DEFAULT_URL = (
     "https://www.dlsite.com/maniax/fsr/=/language/jp/sex_category%5B0%5D/male/"
@@ -61,7 +75,127 @@ async def download_page(session, url):
         return None
 
 
-def extract_work_links(html):
+def load_asmr_subtitle_cache():
+    if not ASMR_SUBTITLE_CACHE_FILE.exists():
+        return {}
+
+    try:
+        with open(ASMR_SUBTITLE_CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+    return data if isinstance(data, dict) else {}
+
+
+def save_asmr_subtitle_cache(cache):
+    with open(ASMR_SUBTITLE_CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2)
+
+
+def get_cached_asmr_subtitle(cache, work_id):
+    entry = cache.get(work_id.upper())
+    if isinstance(entry, dict) and entry.get("status") == "ok":
+        return bool(entry.get("has_subtitle"))
+    if isinstance(entry, bool):
+        return entry
+    return None
+
+
+def set_cached_asmr_subtitle(cache, work_id, has_subtitle):
+    cache[work_id.upper()] = {
+        "has_subtitle": bool(has_subtitle),
+        "status": "ok",
+        "checked_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def build_asmr_subtitle_api_url(work_id):
+    return ASMR_SUBTITLE_API_TEMPLATE.format(work_id=quote(work_id.upper(), safe=""))
+
+
+def has_valid_asmr_subtitle_result(data, work_id):
+    if not isinstance(data, dict):
+        return False
+
+    works = data.get("works")
+    if not isinstance(works, list) or not works:
+        return False
+
+    normalized_id = work_id.upper()
+    for work in works:
+        if not isinstance(work, dict):
+            continue
+        for key in ("source_id", "workno", "work_id", "product_id", "dlsite_id"):
+            value = work.get(key)
+            if isinstance(value, str) and value.upper() == normalized_id:
+                return True
+    return True
+
+
+async def query_asmr_subtitle(session, work_id, cache):
+    work_id = work_id.upper()
+    if not work_id.startswith("RJ"):
+        return False
+
+    cached = get_cached_asmr_subtitle(cache, work_id)
+    if cached is not None:
+        return cached
+
+    url = build_asmr_subtitle_api_url(work_id)
+    for attempt in range(1, ASMR_SUBTITLE_MAX_RETRIES + 1):
+        try:
+            async with session.get(url, timeout=20) as resp:
+                if resp.status == 429 and attempt < ASMR_SUBTITLE_MAX_RETRIES:
+                    retry_after = resp.headers.get("Retry-After")
+                    try:
+                        wait_seconds = float(retry_after) if retry_after else ASMR_SUBTITLE_RETRY_DELAY * attempt
+                    except ValueError:
+                        wait_seconds = ASMR_SUBTITLE_RETRY_DELAY * attempt
+                    print(f"  字幕 API 限流: {work_id}，{wait_seconds:.1f} 秒后重试")
+                    await asyncio.sleep(wait_seconds)
+                    continue
+                if resp.status != 200:
+                    print(f"  字幕 API 状态异常: {work_id} HTTP {resp.status}")
+                    return False
+                data = await resp.json(content_type=None)
+                has_subtitle = has_valid_asmr_subtitle_result(data, work_id)
+                set_cached_asmr_subtitle(cache, work_id, has_subtitle)
+                return has_subtitle
+        except Exception as e:
+            if attempt < ASMR_SUBTITLE_MAX_RETRIES:
+                wait_seconds = ASMR_SUBTITLE_RETRY_DELAY * attempt
+                print(f"  字幕 API 查询失败: {work_id} - {e}，{wait_seconds:.1f} 秒后重试")
+                await asyncio.sleep(wait_seconds)
+                continue
+            print(f"  字幕 API 查询失败: {work_id} - {e}")
+            return False
+
+    return False
+
+
+def clean_listing_text(html):
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = html_lib.unescape(text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def is_audio_search_url(url):
+    return "work_type_category[0]/audio" in unquote(url)
+
+
+def is_audio_asmr_listing_block(block, source_url=""):
+    text = clean_listing_text(block)
+    haystack = html_lib.unescape(block) + " " + text
+    normalized = re.sub(r"\s+", "", haystack).upper()
+    if "ASMR" in normalized:
+        return True
+    if any(keyword in haystack for keyword in ("ボイス・ASMR", "ボイス", "音声")):
+        return True
+    return is_audio_search_url(source_url)
+
+
+def extract_work_links(html, source_url=""):
     """Extract product links from a DLsite search/listing page."""
     work_blocks = re.split(r'<li\s+[^>]*data-list_item_product_id=', html)[1:]
     work_links = []
@@ -95,6 +229,7 @@ def extract_work_links(html):
             "id": work_id,
             "name": work_name,
             "url": work_url,
+            "is_audio_asmr": is_audio_asmr_listing_block(block, source_url),
         })
 
     return work_links
@@ -161,16 +296,27 @@ def build_announce_url(work_id, work_url=""):
 
 
 def parse_cli_queue_args():
-    args = [arg.strip() for arg in sys.argv[1:] if arg.strip()]
-    if not args:
-        return None, None
+    raw_args = [arg.strip() for arg in sys.argv[1:] if arg.strip()]
+    if not raw_args:
+        return None, None, None
+
+    subtitle_asmr_only = False
+    args = []
+    for arg in raw_args:
+        if arg in ASMR_SUBTITLE_FILTER_FLAGS:
+            subtitle_asmr_only = True
+            continue
+        args.append(arg)
 
     max_pages = None
     if len(args) >= 2 and args[-1].isdigit():
         max_pages = int(args[-1])
         args = args[:-1]
 
-    return args, max_pages
+    if not args:
+        return None, max_pages, subtitle_asmr_only
+
+    return args, max_pages, subtitle_asmr_only
 
 
 def load_url_history():
@@ -272,6 +418,13 @@ def prompt_max_pages():
         return MAX_PAGES
 
     return max_pages
+
+
+def prompt_subtitle_asmr_only():
+    value = input("是否只下载有字幕的音声 ASMR？(y/N): ").strip().lower()
+    if not value:
+        return True
+    return value in ("y", "yes", "1", "true", "是")
 
 
 def split_decoded_path(url):
@@ -566,7 +719,43 @@ async def download_works_from_page(session, work_links, page_num):
     return total_downloaded, total_failed
 
 
-async def crawl_search_url(session, search_url, max_pages, queue_index=1, queue_total=1):
+async def filter_subtitled_audio_asmr_links(session, work_links, subtitle_cache):
+    if not work_links:
+        return [], 0
+
+    kept = []
+    skipped = 0
+    semaphore = asyncio.Semaphore(ASMR_SUBTITLE_CONCURRENCY)
+
+    async def check_work(work):
+        if not work.get("is_audio_asmr"):
+            return work, True
+        async with semaphore:
+            has_subtitle = await query_asmr_subtitle(session, work["id"], subtitle_cache)
+            return work, has_subtitle
+
+    results = await asyncio.gather(*(check_work(work) for work in work_links))
+    for work, keep in results:
+        if keep:
+            kept.append(work)
+        else:
+            skipped += 1
+            print(f"  跳过无字幕音声 ASMR: {work['id']} {work.get('name', '')}")
+
+    if skipped:
+        save_asmr_subtitle_cache(subtitle_cache)
+    return kept, skipped
+
+
+async def crawl_search_url(
+    session,
+    search_url,
+    max_pages,
+    queue_index=1,
+    queue_total=1,
+    subtitle_asmr_only=False,
+    subtitle_cache=None,
+):
     page_template, start_page = build_page_template(search_url)
     category_name = extract_category_name(search_url)
     category_slug = make_safe_slug(category_name)
@@ -577,12 +766,14 @@ async def crawl_search_url(session, search_url, max_pages, queue_index=1, queue_
     print(f"分类: {category_name}")
     print(f"起始页: {start_page}")
     print(f"最大页数: {'不限制' if max_pages == 0 else max_pages}")
+    print(f"只下载有字幕音声 ASMR: {'是' if subtitle_asmr_only else '否'}")
     print(f"URL 模板: {page_template}")
 
     all_work_ids = []
     page = start_page
     total_downloaded = 0
     total_failed = 0
+    total_skipped_no_subtitle = 0
 
     while True:
         print(f"\n正在处理第 {page} 页...")
@@ -593,19 +784,31 @@ async def crawl_search_url(session, search_url, max_pages, queue_index=1, queue_
             print(f"  无法下载第 {page} 页，停止")
             break
 
-        work_links = extract_work_links(search_html)
+        work_links = extract_work_links(search_html, search_page_url)
         if not work_links:
             print(f"  第 {page} 页没有找到作品链接，停止")
             break
 
         print(f"  第 {page} 页找到 {len(work_links)} 个作品")
 
+        if subtitle_asmr_only:
+            work_links, skipped_no_subtitle = await filter_subtitled_audio_asmr_links(
+                session,
+                work_links,
+                subtitle_cache if subtitle_cache is not None else {},
+            )
+            total_skipped_no_subtitle += skipped_no_subtitle
+            print(f"  字幕筛选后保留 {len(work_links)} 个作品")
+
         for work in work_links:
             all_work_ids.append(work["id"])
 
-        downloaded, failed = await download_works_from_page(session, work_links, page)
-        total_downloaded += downloaded
-        total_failed += failed
+        if work_links:
+            downloaded, failed = await download_works_from_page(session, work_links, page)
+            total_downloaded += downloaded
+            total_failed += failed
+        else:
+            print(f"  第 {page} 页没有符合字幕筛选条件的作品")
 
         pages_done = page - start_page + 1
         if max_pages > 0 and pages_done >= max_pages:
@@ -623,6 +826,8 @@ async def crawl_search_url(session, search_url, max_pages, queue_index=1, queue_
     print("\n分类爬取完成:")
     print(f"  - 分类: {category_name}")
     print(f"  - 新下载: {total_downloaded} 个作品")
+    if total_skipped_no_subtitle > 0:
+        print(f"  - 跳过无字幕音声 ASMR: {total_skipped_no_subtitle} 个作品")
     if total_failed > 0:
         print(f"  - 下载失败: {total_failed} 个作品 (详情查看 failed_works.md)")
 
@@ -637,13 +842,19 @@ async def crawl_search_url(session, search_url, max_pages, queue_index=1, queue_
         "work_ids": all_work_ids,
         "downloaded": total_downloaded,
         "failed": total_failed,
+        "skipped_no_subtitle": total_skipped_no_subtitle,
     }
 
 
 async def main():
-    cli_urls, cli_max_pages = parse_cli_queue_args()
+    cli_urls, cli_max_pages, cli_subtitle_asmr_only = parse_cli_queue_args()
     search_urls = cli_urls if cli_urls is not None else prompt_search_urls()
     max_pages = cli_max_pages if cli_max_pages is not None else prompt_max_pages()
+    subtitle_asmr_only = (
+        cli_subtitle_asmr_only
+        if cli_subtitle_asmr_only is not None
+        else prompt_subtitle_asmr_only()
+    )
 
     save_url_history(search_urls)
 
@@ -653,10 +864,13 @@ async def main():
     print("=" * 60)
     print(f"队列链接数: {len(search_urls)}")
     print(f"每个链接最大页数: {'不限制' if max_pages == 0 else max_pages}")
+    print(f"只下载有字幕音声 ASMR: {'是' if subtitle_asmr_only else '否'}")
 
     queue_work_ids = []
     total_downloaded = 0
     total_failed = 0
+    total_skipped_no_subtitle = 0
+    subtitle_cache = load_asmr_subtitle_cache() if subtitle_asmr_only else {}
 
     connector = aiohttp.TCPConnector(limit=MAX_CONCURRENT)
     async with aiohttp.ClientSession(headers=HEADERS, connector=connector) as session:
@@ -667,14 +881,22 @@ async def main():
                 max_pages,
                 index,
                 len(search_urls),
+                subtitle_asmr_only=subtitle_asmr_only,
+                subtitle_cache=subtitle_cache,
             )
             queue_work_ids.extend(result["work_ids"])
             total_downloaded += result["downloaded"]
             total_failed += result["failed"]
+            total_skipped_no_subtitle += result.get("skipped_no_subtitle", 0)
+
+    if subtitle_asmr_only:
+        save_asmr_subtitle_cache(subtitle_cache)
 
     print("\n" + "=" * 60)
     print("队列爬取完成:")
     print(f"  - 新下载: {total_downloaded} 个作品")
+    if total_skipped_no_subtitle > 0:
+        print(f"  - 跳过无字幕音声 ASMR: {total_skipped_no_subtitle} 个作品")
     if total_failed > 0:
         print(f"  - 下载失败: {total_failed} 个作品 (详情查看 failed_works.md)")
 

@@ -40,6 +40,8 @@ python crawler.py "DLsite分类URL1" "DLsite分类URL2" 3
 - 分类结果写入 `crawl_results.json`。
 - 当前一次爬取队列的人气顺序会合并写入 `works_order.json`：本次队列排在前面，旧排序保留在后面，避免局部爬取覆盖完整排序。
 - 支持 DLsite `RJ` 和 `VJ` 作品 ID；列表页会保存真实详情页链接，因此 `VJ` 会使用 `https://www.dlsite.com/pro/work/...`。
+- 交互模式会询问是否只下载有字幕的音声 ASMR；命令行可加 `--subtitle-asmr-only`、`--only-subtitle-asmr` 或 `--asmr-subtitle-only`。开启后，列表页中识别为音声 ASMR 的作品会先查 asmr-200 字幕 API；无有效字幕结果就不下载该作品 HTML。HTTP 429 会按退避重试。
+- `update_asmr_subtitles.py` 是字幕缓存维护脚本，启动后通过用户输入选择功能：补查未确认音声 ASMR，或复查已标为无字幕的音声 ASMR。脚本只更新 `asmr_subtitle_cache.json`，不会新增分类；HTTP 429 会按退避重试，且 `Retry-After` 为 0 或缺失时至少等待 10 秒；并发数输入 `auto` 会启用自动调整模式，收到 429 会立即降并发并进入冷却，连续稳定多个窗口后才逐步升并发；运行时会显示进度条和 429 次数，结束时输出处理数量、字幕/无字幕/失败统计、429 次数、耗时和速度总结。
 
 重要改动：
 
@@ -73,6 +75,7 @@ WORK_RETRY_DELAY = 0
 - `output/index.html`
 - `output/data/categories.json`
 - `output/data/search_index.json`
+- `output/data/filter_index/*.json`
 - `output/data/json/page_*.json`
 - `output/data/json/<分类名>/page_*.json`
 - `待翻译/RJxxxx.md` / `待翻译/VJxxxx.md`
@@ -85,11 +88,19 @@ WORK_RETRY_DELAY = 0
 - 全部作品排序优先读取 `works_order.json`；如果该文件只覆盖部分作品，会继续用 `crawl_results.json` 中各分类的 `work_ids` 顺序补齐，最后才按文件名兜底。
 - 每个分类有独立 JSON 分页目录。
 - 网页通过 `output/data/categories.json` 渲染顶部分类下拉框。
+- `categories.json` 里的每个分类会带 `index_path`，指向对应的轻量筛选索引。
 - 分类索引会为带 `genre[0]/...` 的来源 URL 写入 `genre_id`，用于排查相近分类；网页下拉框仍只显示分类名和数量，不显示编号。
 - 网页右上角有全局搜索栏。`generate.py` 会生成轻量 `output/data/search_index.json`，搜索时先异步加载索引并在内存中过滤，再只加载当前搜索结果页需要的作品 JSON，避免每次搜索拉取全部分页。
+- 分类切换和本地状态筛选使用 `output/data/filter_index/*.json`。有喜欢/不需要/玩过、隐藏已阅或作品类型筛选时，不再整类加载所有分页，而是先筛索引，再只读取当前结果页涉及的作品分页 JSON。
 - 作品 JSON 会从 `#work_outline` 解析 `作品形式`。
-- `作品形式` 命中 `音声・ASMR/ボイス・ASMR/ASMR` 时归类为 `音声・ASMR`；命中 `マンガ/漫画/コミック` 时归类为 `漫画`；两者都不命中时归类为 `游戏`。
+- `作品形式` 命中 `音声・ASMR/ボイス・ASMR/ASMR` 时先识别为音声 ASMR，再根据 `asmr_subtitle_cache.json` 和 asmr-200 字幕 API 细化为 `有字幕ASMR` / `无字幕ASMR`；未确认的旧数据临时保留为 `音声・ASMR`。命中 `マンガ/漫画/コミック` 时归类为 `漫画`；两者都不命中时归类为 `游戏`。
+- `python generate.py` 默认只使用字幕缓存细化作品类型；需要补查未知 RJ 时运行 `python generate.py --refresh-asmr-subtitles`。API 429 会按退避重试，并把确认结果写入 `asmr_subtitle_cache.json`。
+- 更推荐用 `python update_asmr_subtitles.py` 维护缓存：它会让用户选择“补查未确认”或“复查无字幕”，然后再运行 `python generate.py` 刷新网页。
+- `generate.py` 解析大量 `works/*.html` 时会使用线程池并显示 `解析HTML` 进度、速度和 ETA，避免在“找到 N 个HTML文件”后长时间无输出；分页 JSON 写入也改为定期报进度，避免几千页输出刷屏。
+- `generate.py` 在 ASMR 字幕类型处理后会进入图片路径整理。这里会先为 `output/images/slider` 和 `output/images/parts` 建立一次性图片索引，并显示索引进度；之后再按作品扫描图片并显示进度，避免多版本同图复用时对每张图片都执行目录 `glob` 导致看起来卡住。
 - 网页会按分类展示可选的 `work_kinds`，并提供“作品类型”多选筛选。
+- 网页默认会把 DLsite 多语言版本折叠成一个作品展示，选择优先级是简体中文 > 繁体中文 > 其他；右下角“全部版本”按钮可以切换为展示同组所有版本。
+- 多语言版本页如果没有旧版 `product-slider-data`，`generate.py` 会从 `translation-product-slider`、`og:image`、`twitter:image`、`image_main` 等字段补封面，并复用同组已有样品图，修复中文版封面空白的问题。
 - 作品图片左上角的 `RJ/VJ` 编号徽标可点击复制，复制后短暂显示 `✓`。
 - 网页使用浏览器 `localStorage` 保存每个作品的本地状态：`喜欢`、`不需要`、`玩过`、`已阅`。普通分类默认不显示已标记为喜欢/不需要/玩过的作品；分类下拉框会追加 `喜欢`、`不需要`、`玩过` 三个本地状态分类用于查看它们。右下角有“本页已阅”、“取消本页已阅”和“隐藏已阅”按钮，隐藏已阅默认关闭。
 
@@ -259,7 +270,7 @@ works/VJ01004768.html
     "count": 1749,
     "pages": 146,
     "data_path": "data/json/page_",
-    "work_kinds": ["音声・ASMR", "漫画", "游戏"]
+    "work_kinds": ["有字幕ASMR", "无字幕ASMR", "音声・ASMR", "漫画", "游戏"]
   },
   {
     "name": "寝取り",
@@ -282,12 +293,16 @@ works/VJ01004768.html
 
 网页搜索栏读取这个文件。每条索引只保存作品 ID、所在全部作品分页、作品类型、所属分类 slug 和预处理后的搜索文本；真正渲染搜索结果时再按分页读取 `output/data/json/page_*.json` 中的完整作品数据。
 
+### `output/data/filter_index/*.json`
+
+网页分类切换和本地状态筛选读取这些文件。每个分类一个索引，索引只保存作品 ID、该分类分页位置和作品类型；前端用它快速计算筛选后的分页，保持分类内原有顺序，并避免一次性拉取所有分类 JSON。
+
 ## 当前已知分类状态
 
 最近修复后的分类关系：
 
-- `全部作品`: 1919 个。
-- `寝取り`: 1484 个。
+- `全部作品`: 34468 个。
+- `寝取り`: 2350 个。
 - `屈辱`: 1785 个。
 
 这些分类可以有交集，交集作品会同时显示在多个分类中。
@@ -369,6 +384,12 @@ python md_to_json.py
 - 2026-05-03：修复搜索框左侧图标偶尔显示成“、”的问题。搜索图标从 CSS 伪元素改为内嵌 SVG，避免伪元素手柄偏移造成视觉杂点。
 - 2026-05-03：改进 crawler 的 URL 历史记录功能。支持记忆所有用过的 URL，交互模式下显示历史 URL 列表并支持多选（用逗号分隔序号），新 URL 自动追加到历史中不重复。
 - 2026-05-03：新增 retry_failed.py 脚本。解析 failed_works.md 并自动重试下载失败作品，支持 announce 和 work 格式 URL 自动切换，成功的作品从列表移除，全部成功则删除文件。
+- 2026-05-08：优化网页初始加载和分类切换速度。`generate.py` 新增 `output/data/filter_index/*.json` 并在 `categories.json` 写入 `index_path`；前端有本地状态/作品类型/隐藏已阅筛选时改为索引分页加载，不再一次性拉取整个分类的所有 JSON。分页 JSON 和搜索索引改为紧凑 JSON 输出，轮播图也改为首图先加载、其余图片切换到时再加载。
+- 2026-05-09：ASMR 字幕能力改为“作品类型”细化，而不是新增分类。`generate.py` 会把音声 ASMR 细化为 `有字幕ASMR` / `无字幕ASMR`，结果缓存到 `asmr_subtitle_cache.json`；`crawler.py` 增加只下载有字幕音声 ASMR 的选项并对 API 429 做重试。
+- 2026-05-09：新增 `update_asmr_subtitles.py`，用于维护 ASMR 字幕缓存。脚本启动后由用户选择补查未确认作品或复查已标无字幕作品，429 会自动重试，确认结果写入 `asmr_subtitle_cache.json`；脚本带终端进度条和结束总结，并支持并发输入 `auto` 自动调整并发数。
+- 2026-05-09：修正 `update_asmr_subtitles.py` 的自动并发策略。429 的 `Retry-After` 为 0 或缺失时至少等待 10 秒；auto 模式收到 429 会立即降并发并进入冷却，连续稳定多个窗口后才允许升并发，避免在限流附近反复震荡。进度条会根据终端编码自动选择方块或 ASCII 字符，避免管道/GBK 输出时编码失败。
+- 2026-05-11：修复 DLsite 多语言版本的封面与重复展示问题。`generate.py` 会从翻译作品页的新结构补封面，并让同组版本复用已有样品图；默认只展示一个版本，优先简体中文，其次繁体中文，再其次其他语言，右下角“全部版本”按钮可切换全展示。HTML 解析阶段改为线程池并带进度/ETA，分页 JSON 写入改为定期报进度，避免 3 万多个 HTML 文件生成时看起来卡住或刷屏。
+- 2026-05-11：继续优化 `generate.py` 的图片路径整理阶段。多版本同图复用从“每张图执行一次目录 glob”改为“启动时一次性建立图片 hash 索引”，并新增图片索引与 `扫描作品图片` 进度输出，修复 ASMR 字幕类型处理完成后静默很久的问题。
 
 ## GUI 应用 (`gui/`)
 
