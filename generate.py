@@ -292,6 +292,13 @@ VERSION_PRIORITY = {
     "CHI_HANS": 0,
     "CHI_HANT": 1,
 }
+PLATFORM_VERSION_PRIORITY = {
+    "PC": 0,
+    "WINDOWS": 0,
+    "MAC": 0,
+    "ANDROID": 2,
+    "IOS": 2,
+}
 
 
 def get_work_kind(work_types):
@@ -356,20 +363,115 @@ def infer_language_from_name(work_name):
     return ""
 
 
-def build_version_info(product_id, work_name, editions):
-    current_edition = get_current_language_edition(editions, product_id)
-    version_ids = []
-    for edition in editions:
+def infer_platform_from_label(label):
+    normalized = clean_html_text(label).upper().replace(" ", "")
+    if "ANDROID" in normalized:
+        return "ANDROID"
+    if "IOS" in normalized or "IPHONE" in normalized or "IPAD" in normalized:
+        return "IOS"
+    if "PC" in normalized or "WINDOWS" in normalized or "MAC" in normalized:
+        return "PC"
+    return ""
+
+
+def infer_platform_from_name(work_name):
+    normalized = clean_html_text(work_name).upper().replace(" ", "")
+    if "ANDROID" in normalized:
+        return "ANDROID"
+    if "IOS" in normalized or "IPHONE" in normalized or "IPAD" in normalized:
+        return "IOS"
+    if "PC" in normalized or "WINDOWS" in normalized or "MAC" in normalized:
+        return "PC"
+    return ""
+
+
+def extract_linked_version_entries(content):
+    section_match = re.search(
+        r'<ul\s+class="work_edition"[^>]*>(.*?)</ul>',
+        content,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if not section_match:
+        return []
+
+    entries = []
+    section_html = section_match.group(1)
+    for match in re.finditer(
+        r'<a[^>]+href="[^"]*/product_id/((?:RJ|VJ)\d+)\.html"[^>]*class="[^"]*work_edition_linklist_item[^"]*"[^>]*>.*?<dt>(.*?)</dt>',
+        section_html,
+        re.DOTALL | re.IGNORECASE,
+    ):
+        workno = match.group(1).upper()
+        label = clean_html_text(match.group(2))
+        entries.append({
+            "workno": workno,
+            "display_label": label,
+            "platform": infer_platform_from_label(label),
+        })
+    return entries
+
+
+def merge_version_entries(product_id, work_name, language_editions, linked_version_entries):
+    merged = {}
+
+    def get_or_create_entry(workno):
+        workno = str(workno or "").upper()
+        if not workno:
+            return None
+        if workno not in merged:
+            merged[workno] = {
+                "workno": workno,
+                "edition_id": None,
+                "lang": "",
+                "display_label": "",
+                "platform": "",
+                "platform_label": "",
+            }
+        return merged[workno]
+
+    for edition in language_editions:
         if not isinstance(edition, dict):
             continue
-        workno = str(edition.get("workno", "")).strip()
-        if workno:
-            version_ids.append(workno.upper())
-    version_ids = unique_values(version_ids)
+        entry = get_or_create_entry(edition.get("workno"))
+        if not entry:
+            continue
+        entry["edition_id"] = edition.get("edition_id")
+        entry["lang"] = str(edition.get("lang") or "").upper()
+        entry["display_label"] = str(edition.get("display_label") or "")
+
+    for linked_entry in linked_version_entries:
+        if not isinstance(linked_entry, dict):
+            continue
+        entry = get_or_create_entry(linked_entry.get("workno"))
+        if not entry:
+            continue
+        entry["platform"] = linked_entry.get("platform", "")
+        entry["platform_label"] = linked_entry.get("display_label", "")
+
+    current_entry = get_or_create_entry(product_id)
+    current_entry["lang"] = current_entry.get("lang") or infer_language_from_name(work_name)
+    current_entry["platform"] = current_entry.get("platform") or infer_platform_from_name(work_name)
+    return list(merged.values())
+
+
+def compute_version_rank(language, platform):
+    language_rank = VERSION_PRIORITY.get(language, 2)
+    platform_rank = PLATFORM_VERSION_PRIORITY.get(platform, 0)
+    return language_rank * 10 + platform_rank
+
+
+def build_version_info(product_id, work_name, editions, linked_version_entries):
+    merged_entries = merge_version_entries(product_id, work_name, editions, linked_version_entries)
+    current_edition = get_current_language_edition(merged_entries, product_id)
+    version_ids = unique_values([
+        str(entry.get("workno", "")).upper()
+        for entry in merged_entries
+        if str(entry.get("workno", "")).strip()
+    ])
 
     edition_id = current_edition.get("edition_id")
     if edition_id is None:
-        for edition in editions:
+        for edition in merged_entries:
             if isinstance(edition, dict) and edition.get("edition_id") is not None:
                 edition_id = edition.get("edition_id")
                 break
@@ -380,12 +482,15 @@ def build_version_info(product_id, work_name, editions):
         version_group_id = product_id.upper()
 
     language = str(current_edition.get("lang") or infer_language_from_name(work_name)).upper()
+    platform = str(current_edition.get("platform") or infer_platform_from_name(work_name)).upper()
     return {
         "version_group_id": version_group_id,
         "version_lang": language,
         "version_label": current_edition.get("display_label", ""),
+        "version_platform": platform,
+        "version_platform_label": current_edition.get("platform_label", ""),
         "version_ids": version_ids,
-        "version_rank": VERSION_PRIORITY.get(language, 2),
+        "version_rank": compute_version_rank(language, platform),
     }
 
 
@@ -554,7 +659,8 @@ def parse_html_file(filepath):
     work_types = extract_outline_values(outline_rows, ("作品形式",))
     work_kind = get_work_kind(work_types)
     language_editions = extract_language_editions(content)
-    version_info = build_version_info(product_id, work_name, language_editions)
+    linked_version_entries = extract_linked_version_entries(content)
+    version_info = build_version_info(product_id, work_name, language_editions, linked_version_entries)
 
     slider_images = []
     slider_block = re.search(r'class="product-slider-data">(.*?)</div>\s*<div\s+class="work_slider', content, re.DOTALL)
