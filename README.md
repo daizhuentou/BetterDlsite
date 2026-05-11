@@ -12,18 +12,23 @@
 
 - **爬取作品信息** — 从 DLsite 搜索页批量抓取作品 HTML，自动下载图片
   - 支持 RJ/VJ 作品
-  - 支持多链接队列爬取
-  - 支持只下载有字幕的音声 ASMR
+  - 支持多链接队列爬取，支持并发处理多个分类 URL
+  - 支持只下载有字幕的音声 ASMR，可选择仅使用本地缓存或缓存缺失时回源 API
+  - 支持 URL 历史记录和多选历史 URL
+  - 自动检测 URL 是否包含 `genre[0]` 参数
 - **生成翻译稿件** — 解析 HTML 生成待翻译 Markdown 文件
 - **导入翻译结果** — 将翻译好的 Markdown 应用到 JSON 数据
 - **本地网页展示** — 启动本地服务器，以网页形式浏览作品
   - 作品卡左上角 RJ/VJ 编号可点击复制
   - 作品标题可点击复制
-  - 右上角有搜索框，支持按分类和作品类型筛选
+  - 右上角有搜索框，支持拼音和拼音首字母搜索
+  - 分类筛选器支持实时搜索过滤
+  - 支持按分类和作品类型筛选
   - 支持本地状态标记（喜欢、不需要、玩过、已阅）
   - 支持局域网访问，状态数据在设备间共享
-  - 默认只展示一个语言版本（优先简体中文），可切换显示全部版本
+  - 默认只展示一个语言版本（优先简体中文）和一个平台版本（优先 PC 版），可切换显示全部版本
   - 支持作品类型筛选（有字幕ASMR/无字幕ASMR/漫画/游戏）
+  - 自动使用 DLsite 官方分类的简体中文名称
 
 ## 展示
 
@@ -78,10 +83,12 @@ python crawler.py
 运行后：
 1. 输入 DLsite 搜索/分类页 URL（可输入多个）
 2. 输入 `all` 可使用全部历史 URL，或输入逗号分隔的序号选择多个历史 URL
-3. 输入新 URL 会自动追加到历史中不重复
-4. 设置每个链接最大爬取页数（0 = 不限制）
-5. 可选择是否只下载有字幕的音声 ASMR
-6. 爬虫自动下载作品 HTML 到 `works/` 目录
+3. 输入新 URL 会自动追加到历史中不重复（URL 必须包含 `genre[0]` 参数）
+4. 设置同时并发处理几个链接
+5. 设置每个链接最大爬取页数（0 = 不限制）
+6. 可选择是否只下载有字幕的音声 ASMR
+7. 可选择是否只使用本地字幕缓存（默认是，避免 API 限流）
+8. 爬虫自动下载作品 HTML 到 `works/` 目录
 
 #### 方式2：命令行参数
 
@@ -92,8 +99,14 @@ python crawler.py "DLsite分类URL" 0
 # 多个 URL
 python crawler.py "DLsite分类URL1" "DLsite分类URL2" 0
 
-# 只下载有字幕的音声 ASMR
-python crawler.py "DLsite分类URL" 0 --subtitle-asmr-only
+# 设置链接并发数
+python crawler.py "DLsite分类URL" 0 --url-concurrency 3
+
+# 只下载有字幕的音声 ASMR（仅本地缓存）
+python crawler.py "DLsite分类URL" 0 --subtitle-asmr-only --subtitle-cache-only
+
+# 只下载有字幕的音声 ASMR（缓存缺失时回源 API）
+python crawler.py "DLsite分类URL" 0 --subtitle-asmr-only --subtitle-refresh-missing
 ```
 
 ### 1.5. 更新 ASMR 字幕缓存（可选）
@@ -103,10 +116,11 @@ python update_asmr_subtitles.py
 ```
 
 运行后选择：
-- 补查未确认音声 ASMR
-- 复查已标为无字幕的音声 ASMR
+1. 补查未确认音声 ASMR
+2. 复查已标为无字幕的音声 ASMR
+3. 同步官方有字幕作品目录
 
-输入 `auto` 可自动调整并发数。
+输入 `auto` 可自动调整并发数（遇到 429 自动降速）。
 
 ### 2. 生成数据
 
@@ -200,10 +214,12 @@ python update_asmr_subtitles.py
 ```
 
 功能：
-- 补查未确认音声 ASMR
-- 复查已标为无字幕的音声 ASMR
-- 支持自动调整并发数
+1. 补查未确认音声 ASMR
+2. 复查已标为无字幕的音声 ASMR
+3. 同步官方有字幕作品目录（增量更新，支持断点续传）
+- 支持自动调整并发数（遇到 429 自动降速）
 - 显示进度条和统计信息
+- 支持拼音和拼音首字母搜索
 
 ## GUI 应用
 
