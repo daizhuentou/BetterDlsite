@@ -915,6 +915,1202 @@ def escape_html(text):
 
 ITEMS_PER_PAGE = 12
 
+def get_style_variant(style_key):
+    return STYLE_VARIANT_BY_KEY.get(style_key, STYLE_VARIANTS[0])
+
+
+def get_style_extra_css(style_key):
+    return STYLE_EXTRA_CSS.get(style_key, "")
+
+
+def build_style_switcher_html(active_key):
+    links = []
+    for variant in STYLE_VARIANTS:
+        classes = "style-link active" if variant["key"] == active_key else "style-link"
+        links.append(
+            f'<a class="{classes}" href="{escape_html(variant["file"])}">{escape_html(variant["name"])}</a>'
+        )
+    return "\n                ".join(links)
+
+
+STYLE_VARIANTS = [
+    {
+        "key": "classic",
+        "name": "经典卡片",
+        "file": "index.html",
+        "body_class": "ui-classic",
+        "layout": "classic",
+    },
+    {
+        "key": "gallery",
+        "name": "沉浸封面墙",
+        "file": "index_gallery.html",
+        "body_class": "ui-gallery",
+        "layout": "gallery",
+    },
+    {
+        "key": "dashboard",
+        "name": "数据工作台",
+        "file": "index_dashboard.html",
+        "body_class": "ui-dashboard",
+        "layout": "dashboard",
+    },
+    {
+        "key": "compact",
+        "name": "紧凑片库",
+        "file": "index_compact.html",
+        "body_class": "ui-compact",
+        "layout": "compact",
+    },
+    {
+        "key": "magazine",
+        "name": "杂志特写",
+        "file": "index_magazine.html",
+        "body_class": "ui-magazine",
+        "layout": "magazine",
+    },
+]
+
+STYLE_VARIANT_BY_KEY = {variant["key"]: variant for variant in STYLE_VARIANTS}
+
+STYLE_EXTRA_CSS = {
+    "classic": """
+        body.ui-classic .style-link[href="index.html"] {
+            background: linear-gradient(135deg, #11998e, #38ef7d);
+            color: #fff;
+        }
+    """,
+    "gallery": """
+        body.ui-gallery {
+            background: #11131a;
+            padding: 22px;
+        }
+        body.ui-gallery .container { max-width: 1720px; }
+        body.ui-gallery .top-bar {
+            min-height: 88px;
+            align-items: flex-start;
+            justify-content: flex-start;
+            padding: 16px 460px 14px 18px;
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 22px;
+            background: rgba(255,255,255,0.06);
+            box-shadow: 0 24px 70px rgba(0,0,0,0.32);
+            backdrop-filter: blur(18px);
+        }
+        body.ui-gallery h1 {
+            text-align: left;
+            font-size: 2.2em;
+            letter-spacing: 0;
+            text-shadow: none;
+        }
+        body.ui-gallery .style-switcher {
+            position: relative;
+            left: auto;
+            top: auto;
+            transform: none;
+            max-width: 740px;
+            margin-left: 24px;
+            margin-top: 4px;
+        }
+        body.ui-gallery .search-box {
+            width: min(420px, 28vw);
+            top: 22px;
+            transform: none;
+        }
+        body.ui-gallery .category-bar {
+            justify-content: flex-start;
+            margin: 18px 0 22px;
+        }
+        body.ui-gallery .works-grid {
+            grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+            grid-auto-flow: dense;
+            gap: 18px;
+        }
+        body.ui-gallery .work-card {
+            position: relative;
+            border-radius: 18px;
+            background: #161a22;
+            color: #f4f7fb;
+            overflow: hidden;
+            min-height: 520px;
+            box-shadow: 0 22px 58px rgba(0,0,0,0.34);
+        }
+        body.ui-gallery .work-card:nth-child(5n + 1) {
+            grid-row: span 2;
+            min-height: 680px;
+        }
+        body.ui-gallery .work-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 30px 78px rgba(0,0,0,0.48);
+        }
+        body.ui-gallery .image-carousel {
+            height: 360px;
+            background: #0b0d12;
+        }
+        body.ui-gallery .work-card:nth-child(5n + 1) .image-carousel { height: 500px; }
+        body.ui-gallery .carousel-slide img {
+            width: 100%;
+            height: 100%;
+            max-width: none;
+            max-height: none;
+            object-fit: contain;
+            object-position: center;
+        }
+        body.ui-gallery .work-content {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            padding: 76px 18px 18px;
+            color: #fff;
+            background: linear-gradient(180deg, transparent 0%, rgba(10,12,18,0.84) 28%, rgba(10,12,18,0.96) 100%);
+        }
+        body.ui-gallery .name-section,
+        body.ui-gallery .description-section,
+        body.ui-gallery .intro-section {
+            border: 0;
+            margin: 0;
+            padding: 0;
+            background: transparent;
+            max-height: none;
+        }
+        body.ui-gallery .maker-name,
+        body.ui-gallery .work-kind-row,
+        body.ui-gallery .description-text,
+        body.ui-gallery .intro-content,
+        body.ui-gallery .name-translated-text {
+            color: rgba(255,255,255,0.78);
+        }
+        body.ui-gallery .name-row {
+            display: block;
+            margin-bottom: 10px;
+        }
+        body.ui-gallery .name-label { display: none; }
+        body.ui-gallery .name-text {
+            display: block;
+            color: #fff;
+            font-size: 1.16em;
+            line-height: 1.35;
+        }
+        body.ui-gallery .name-translated-text {
+            display: block;
+            border: 0;
+            font-size: 0.96em;
+            margin-top: 4px;
+        }
+        body.ui-gallery .copy-btn { display: none; }
+        body.ui-gallery .section-title { display: none; }
+        body.ui-gallery .description-text {
+            display: block;
+            overflow: visible;
+            font-size: 0.88em;
+            line-height: 1.6;
+        }
+        body.ui-gallery .intro-section { display: block; }
+        body.ui-gallery .scroll-reveal {
+            max-height: 232px;
+            overflow: auto;
+            padding-right: 8px;
+            margin-top: 10px;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.4) rgba(255,255,255,0.08);
+        }
+        body.ui-gallery .scroll-reveal .description-section,
+        body.ui-gallery .scroll-reveal .intro-section {
+            display: block;
+            background: transparent;
+        }
+        body.ui-gallery .scroll-reveal .description-text {
+            display: block;
+            overflow: visible;
+        }
+        body.ui-gallery .kind-pill {
+            color: #03110d;
+            background: #9af4c6;
+            border: 0;
+        }
+        body.ui-gallery .state-btn,
+        body.ui-gallery .asmr-link-btn {
+            color: #fff;
+            background: rgba(255,255,255,0.12);
+            border-color: rgba(255,255,255,0.2);
+            box-shadow: none;
+        }
+        body.ui-gallery .scroll-reveal {
+            max-height: 210px;
+            overflow: auto;
+            padding-right: 8px;
+            margin-top: 10px;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.4) rgba(255,255,255,0.08);
+        }
+        body.ui-gallery .scroll-reveal::-webkit-scrollbar { width: 6px; }
+        body.ui-gallery .scroll-reveal::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.4);
+            border-radius: 999px;
+        }
+        body.ui-gallery .scroll-reveal::-webkit-scrollbar-track {
+            background: rgba(255,255,255,0.08);
+        }
+    """,
+    "dashboard": """
+        body.ui-dashboard {
+            background:
+                linear-gradient(135deg, #0d1117 0%, #171717 48%, #0d1512 100%);
+            padding: 18px;
+            color: #e8edf3;
+        }
+        body.ui-dashboard * {
+            scrollbar-color: #465461 #111820;
+        }
+        body.ui-dashboard ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        body.ui-dashboard ::-webkit-scrollbar-track {
+            background: #111820;
+        }
+        body.ui-dashboard ::-webkit-scrollbar-thumb {
+            background: #465461;
+            border-radius: 999px;
+        }
+        body.ui-dashboard ::-webkit-scrollbar-thumb:hover {
+            background: #5a6875;
+        }
+        body.ui-dashboard .container {
+            max-width: 1840px;
+            display: grid;
+            grid-template-columns: 320px minmax(0, 1fr);
+            grid-template-areas:
+                "head head"
+                "tools main"
+                "top main"
+                ". bottom";
+            gap: 18px;
+        }
+        body.ui-dashboard .top-bar {
+            grid-area: head;
+            min-height: 74px;
+            margin: 0;
+            padding: 14px 18px;
+            justify-content: flex-start;
+            border: 1px solid #2a343d;
+            border-radius: 14px;
+            background: #171c22;
+            box-shadow: 0 18px 42px rgba(0,0,0,0.28);
+        }
+        body.ui-dashboard h1 {
+            color: #f4f7fb;
+            font-size: 1.8em;
+            text-align: left;
+            text-shadow: none;
+            letter-spacing: 0;
+        }
+        body.ui-dashboard .style-switcher {
+            position: relative;
+            left: auto;
+            top: auto;
+            transform: none;
+            max-width: none;
+            margin-left: 26px;
+        }
+        body.ui-dashboard .style-link {
+            color: #b8c4d0;
+            background: #20262d;
+            border-color: #303a44;
+        }
+        body.ui-dashboard .style-link.active {
+            color: #07130e;
+            background: #7ee2a8;
+        }
+        body.ui-dashboard .search-box {
+            right: 18px;
+            width: min(420px, 28vw);
+        }
+        body.ui-dashboard .search-input {
+            color: #edf3f8;
+            background: #111820;
+            border-color: #303b45;
+            box-shadow: 0 10px 26px rgba(0,0,0,0.2);
+        }
+        body.ui-dashboard .search-input::placeholder { color: #778897; }
+        body.ui-dashboard .search-icon { color: #9aa9b8; }
+        body.ui-dashboard .search-clear {
+            color: #dce6ef;
+            background: rgba(255,255,255,0.08);
+        }
+        body.ui-dashboard .category-bar {
+            grid-area: tools;
+            display: block;
+            margin: 0;
+            padding: 16px;
+            border: 1px solid #2a343d;
+            border-radius: 14px;
+            background: #171c22;
+            box-shadow: 0 18px 42px rgba(0,0,0,0.24);
+        }
+        body.ui-dashboard .control-group {
+            display: block;
+            margin-bottom: 16px;
+        }
+        body.ui-dashboard .category-label {
+            display: block;
+            color: #a6b4c2;
+            margin-bottom: 8px;
+            font-weight: 700;
+        }
+        body.ui-dashboard .category-select {
+            width: 100%;
+            min-width: 0;
+            color: #e9eff5;
+            background: #111820;
+            border: 1px solid #303b45;
+            box-shadow: none;
+        }
+        body.ui-dashboard .category-picker {
+            width: 100%;
+            min-width: 0;
+        }
+        body.ui-dashboard .category-select-arrow {
+            border-color: #9aa9b8;
+        }
+        body.ui-dashboard .category-dropdown {
+            background: #171c22;
+            border: 1px solid #303b45;
+            box-shadow: 0 24px 58px rgba(0,0,0,0.42);
+        }
+        body.ui-dashboard .category-search-wrap {
+            background: #12181f;
+            border-bottom-color: #2a343d;
+        }
+        body.ui-dashboard .category-search-input {
+            color: #edf3f8;
+            background: #0f151c;
+            border-color: #303b45;
+        }
+        body.ui-dashboard .category-search-input:focus {
+            border-color: #7ee2a8;
+            box-shadow: 0 0 0 4px rgba(126,226,168,0.12);
+        }
+        body.ui-dashboard .category-option-list {
+            background: #171c22;
+        }
+        body.ui-dashboard .category-option {
+            color: #dce6ef;
+        }
+        body.ui-dashboard .category-option:hover {
+            background: rgba(126,226,168,0.1);
+        }
+        body.ui-dashboard .category-option.active {
+            color: #07130e;
+            background: #7ee2a8;
+        }
+        body.ui-dashboard .category-option-count,
+        body.ui-dashboard .category-option-empty {
+            color: #8fa0af;
+        }
+        body.ui-dashboard .category-option.active .category-option-count {
+            color: #123821;
+        }
+        body.ui-dashboard .work-type-buttons {
+            display: grid;
+            grid-template-columns: 1fr;
+        }
+        body.ui-dashboard .work-type-btn {
+            width: 100%;
+            color: #b8c4d0;
+            background: #111820;
+            border-color: #303b45;
+            border-radius: 8px;
+            text-align: left;
+            padding: 9px 11px;
+        }
+        body.ui-dashboard .work-type-btn.active {
+            color: #07130e;
+            background: #7ee2a8;
+        }
+        body.ui-dashboard .category-meta {
+            display: block;
+            color: #8fa0af;
+            margin-top: 8px;
+        }
+        body.ui-dashboard .page-info {
+            color: #a6b4c2;
+        }
+        body.ui-dashboard .page-btn {
+            color: #dce6ef;
+            background: #20262d;
+            border: 1px solid #303b45;
+        }
+        body.ui-dashboard .page-btn.active {
+            color: #07130e;
+            background: #7ee2a8;
+            border-color: transparent;
+        }
+        body.ui-dashboard .page-btn:disabled {
+            background: #14191f;
+            color: #64717e;
+        }
+        body.ui-dashboard #pagination {
+            grid-area: top;
+            margin: 0;
+            align-self: start;
+            justify-content: flex-start;
+        }
+        body.ui-dashboard #paginationBottom {
+            grid-area: bottom;
+            margin: 0;
+            justify-content: center;
+        }
+        body.ui-dashboard .works-grid {
+            grid-area: main;
+            display: block;
+        }
+        body.ui-dashboard .work-card {
+            display: grid;
+            grid-template-columns: 180px minmax(0, 1fr) minmax(260px, 0.82fr);
+            gap: 16px;
+            align-items: stretch;
+            border-radius: 12px;
+            border: 1px solid #2a343d;
+            background: #171c22;
+            box-shadow: 0 14px 34px rgba(0,0,0,0.22);
+            margin-bottom: 12px;
+        }
+        body.ui-dashboard .work-card:hover {
+            transform: translateX(3px);
+            box-shadow: 0 18px 44px rgba(0,0,0,0.32);
+        }
+        body.ui-dashboard .image-carousel {
+            height: 100%;
+            min-height: 100%;
+            border-radius: 12px 0 0 12px;
+            background: #0c1117;
+            overflow: hidden;
+        }
+        body.ui-dashboard .carousel-slide {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        body.ui-dashboard .carousel-slide img {
+            width: 100%;
+            height: 100%;
+            max-width: none;
+            max-height: none;
+            object-fit: contain;
+            padding: 10px;
+            background: linear-gradient(135deg, #0e141b 0%, #161d24 100%);
+        }
+        body.ui-dashboard .work-content {
+            grid-column: 2 / span 2;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(220px, 0.72fr);
+            gap: 14px;
+            padding: 14px 16px 14px 0;
+            min-width: 0;
+        }
+        body.ui-dashboard .name-section,
+        body.ui-dashboard .description-section,
+        body.ui-dashboard .intro-section {
+            margin: 0;
+            padding: 0;
+            border: 0;
+            background: transparent;
+        }
+        body.ui-dashboard .name-section { grid-column: 1; }
+        body.ui-dashboard .description-section { grid-column: 1; }
+        body.ui-dashboard .intro-section {
+            grid-column: 2;
+            grid-row: 1 / span 2;
+            max-height: 170px;
+            overflow: auto;
+            background: #111820;
+            border: 1px solid #26313a;
+            border-radius: 10px;
+            padding: 12px;
+        }
+        body.ui-dashboard .description-text {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            font-size: 0.88em;
+            line-height: 1.55;
+        }
+        body.ui-dashboard .name-label,
+        body.ui-dashboard .maker-name,
+        body.ui-dashboard .work-kind-row,
+        body.ui-dashboard .description-text,
+        body.ui-dashboard .intro-content,
+        body.ui-dashboard .name-translated-text {
+            color: #a6b4c2;
+        }
+        body.ui-dashboard .name-text {
+            color: #f2f6fb;
+            font-size: 1.05em;
+        }
+        body.ui-dashboard .name-translated-text {
+            border-bottom-color: #34404a;
+        }
+        body.ui-dashboard .name-row {
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+        body.ui-dashboard .copy-btn {
+            padding: 5px 10px;
+            color: #07130e;
+            background: #7ee2a8;
+        }
+        body.ui-dashboard .section-title {
+            color: #7ee2a8;
+            font-size: 0.9em;
+            margin-bottom: 6px;
+        }
+        body.ui-dashboard .section-title::before {
+            background: #7ee2a8;
+        }
+        body.ui-dashboard .kind-pill {
+            color: #07130e;
+            background: #7ee2a8;
+            border: 0;
+        }
+        body.ui-dashboard .state-btn,
+        body.ui-dashboard .asmr-link-btn {
+            color: #dce6ef;
+            background: #20262d;
+            border-color: #303b45;
+            box-shadow: none;
+        }
+        body.ui-dashboard .state-btn.active-like {
+            color: #8ef0b5;
+            background: rgba(33, 197, 94, 0.14);
+            border-color: rgba(126,226,168,0.4);
+        }
+        body.ui-dashboard .state-btn.active-dislike {
+            color: #ff9a9a;
+            background: rgba(244, 63, 94, 0.14);
+            border-color: rgba(255,154,154,0.35);
+        }
+        body.ui-dashboard .state-btn.active-played {
+            color: #9fc3ff;
+            background: rgba(96, 165, 250, 0.14);
+            border-color: rgba(159,195,255,0.35);
+        }
+        body.ui-dashboard .state-pill,
+        body.ui-dashboard .state-pill.read {
+            color: #b8c4d0;
+            background: #20262d;
+        }
+        body.ui-dashboard .parts-heading {
+            color: #7ee2a8;
+        }
+        body.ui-dashboard .floating-btn.secondary {
+            color: #dce6ef;
+            background: #20262d;
+            border: 1px solid #303b45;
+        }
+        body.ui-dashboard .floating-btn.active {
+            background: #9f3434;
+        }
+        body.ui-dashboard .floating-actions {
+            left: 18px;
+            right: auto;
+            bottom: 18px;
+            width: 320px;
+            justify-content: flex-start;
+        }
+        @media (max-width: 1100px) {
+            body.ui-dashboard .container {
+                display: block;
+            }
+            body.ui-dashboard .top-bar,
+            body.ui-dashboard .category-bar,
+            body.ui-dashboard #pagination,
+            body.ui-dashboard #paginationBottom {
+                margin-bottom: 16px;
+            }
+            body.ui-dashboard .work-card,
+            body.ui-dashboard .work-content {
+                display: block;
+            }
+            body.ui-dashboard .image-carousel {
+                height: 260px;
+                border-radius: 12px 12px 0 0;
+            }
+            body.ui-dashboard .work-content {
+                padding: 16px;
+            }
+            body.ui-dashboard .intro-section {
+                margin-top: 12px;
+            }
+            body.ui-dashboard .floating-actions {
+                left: 12px;
+                right: 12px;
+                width: auto;
+            }
+        }
+    """,
+    "magazine": """
+        body.ui-magazine {
+            background:
+                radial-gradient(circle at top right, rgba(116,75,162,0.28), transparent 26%),
+                radial-gradient(circle at 15% 10%, rgba(17,153,142,0.22), transparent 20%),
+                linear-gradient(135deg, #11131a 0%, #1c1e2a 52%, #0f141d 100%);
+            color: #f5f7fb;
+        }
+        body.ui-magazine .container { max-width: 1580px; }
+        body.ui-magazine .top-bar {
+            min-height: 88px;
+            justify-content: flex-start;
+            padding: 18px 18px 18px 0;
+            margin-bottom: 16px;
+        }
+        body.ui-magazine h1 {
+            text-align: left;
+            font-family: Georgia, 'Times New Roman', 'Microsoft YaHei', serif;
+            letter-spacing: 0;
+            font-size: 2.55em;
+            text-shadow: 0 16px 30px rgba(0,0,0,0.4);
+        }
+        body.ui-magazine .style-switcher {
+            position: relative;
+            left: auto;
+            top: auto;
+            transform: none;
+            max-width: 760px;
+            margin-left: 24px;
+        }
+        body.ui-magazine .style-link {
+            background: rgba(255,255,255,0.08);
+            color: rgba(255,255,255,0.8);
+            border-color: rgba(255,255,255,0.12);
+        }
+        body.ui-magazine .style-link.active {
+            background: linear-gradient(135deg, #f3dfb3 0%, #4cc3aa 100%);
+            color: #13161a;
+        }
+        body.ui-magazine .search-box {
+            position: relative;
+            right: auto;
+            top: auto;
+            transform: none;
+            width: min(420px, 30vw);
+            margin-left: auto;
+        }
+        body.ui-magazine .search-input {
+            color: #fff7ea;
+            background: rgba(255,255,255,0.08);
+            border-color: rgba(255,255,255,0.16);
+            box-shadow: none;
+        }
+        body.ui-magazine .category-bar {
+            justify-content: flex-start;
+            margin-bottom: 18px;
+        }
+        body.ui-magazine .works-grid {
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            gap: 18px;
+        }
+        body.ui-magazine .work-card {
+            border-radius: 10px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.08);
+            backdrop-filter: blur(14px);
+            box-shadow: 0 24px 56px rgba(0,0,0,0.28);
+            overflow: hidden;
+        }
+        body.ui-magazine .work-card:hover {
+            transform: translateY(-5px) scale(1.01);
+            box-shadow: 0 28px 72px rgba(0,0,0,0.4);
+        }
+        body.ui-magazine .image-carousel {
+            height: 280px;
+            background: #0a0f17;
+        }
+        body.ui-magazine .work-content {
+            padding: 18px;
+            color: #f4f7fb;
+        }
+        body.ui-magazine .name-section,
+        body.ui-magazine .description-section,
+        body.ui-magazine .intro-section {
+            background: transparent;
+            border: 0;
+        }
+        body.ui-magazine .name-text { font-size: 1.22em; color: #fff; }
+        body.ui-magazine .description-text { color: rgba(255,255,255,0.76); }
+        body.ui-magazine .intro-section {
+            max-height: 260px;
+            overflow: auto;
+            padding-right: 4px;
+        }
+        body.ui-magazine .kind-pill {
+            background: rgba(255,255,255,0.1);
+            color: #f3dfb3;
+            border-color: rgba(255,255,255,0.14);
+        }
+        body.ui-magazine .work-id-badge,
+        body.ui-magazine .copy-btn,
+        body.ui-magazine .state-btn {
+            border-radius: 999px;
+        }
+        body.ui-magazine .state-btn.active-like { background: rgba(33, 197, 94, 0.14); color: #7ee2a8; }
+        body.ui-magazine .state-btn.active-dislike { background: rgba(244, 63, 94, 0.14); color: #ff9090; }
+        body.ui-magazine .state-btn.active-played { background: rgba(59, 130, 246, 0.14); color: #8cb7ff; }
+    """,
+    "poster": """
+        body.ui-poster {
+            background:
+                linear-gradient(135deg, rgba(255,255,255,0.02) 0 25%, transparent 25% 50%, rgba(255,255,255,0.02) 50% 75%, transparent 75% 100%),
+                linear-gradient(135deg, #0b1020 0%, #10182a 52%, #0b1020 100%);
+        }
+        body.ui-poster .container { max-width: 1700px; }
+        body.ui-poster .top-bar { justify-content: flex-start; margin-bottom: 18px; }
+        body.ui-poster h1 { text-align: left; text-shadow: 0 14px 30px rgba(0,0,0,0.35); }
+        body.ui-poster .works-grid {
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 14px;
+        }
+        body.ui-poster .work-card {
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 18px 40px rgba(0,0,0,0.25);
+        }
+        body.ui-poster .work-card:hover {
+            transform: translateY(-4px) rotate(-0.2deg);
+        }
+        body.ui-poster .image-carousel { height: 420px; }
+        body.ui-poster .work-content {
+            position: absolute;
+            inset: auto 0 0 0;
+            padding: 72px 16px 16px;
+            background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.76) 30%, rgba(0,0,0,0.92) 100%);
+            color: #fff;
+        }
+        body.ui-poster .description-section,
+        body.ui-poster .intro-section { display: none; }
+        body.ui-poster .name-section { border: 0; margin: 0; padding: 0; }
+        body.ui-poster .name-text { color: #fff; font-size: 1.08em; }
+        body.ui-poster .name-translated-text { color: rgba(255,255,255,0.8); border: 0; }
+        body.ui-poster .copy-btn { display: none; }
+        body.ui-poster .maker-name { color: rgba(255,255,255,0.75); }
+    """,
+    "mosaic": """
+        body.ui-mosaic {
+            background: #0e1520;
+            padding: 18px;
+        }
+        body.ui-mosaic .container { max-width: 1800px; }
+        body.ui-mosaic .works-grid {
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+        }
+        body.ui-mosaic .work-card {
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 14px 32px rgba(0,0,0,0.24);
+        }
+        body.ui-mosaic .work-card:nth-child(4n + 1) { grid-column: span 2; }
+        body.ui-mosaic .work-card:nth-child(6n + 2) { grid-row: span 2; }
+        body.ui-mosaic .image-carousel { height: 100%; min-height: 220px; }
+        body.ui-mosaic .work-content { padding: 12px; }
+        body.ui-mosaic .description-section,
+        body.ui-mosaic .intro-section { display: none; }
+        body.ui-mosaic .name-text { font-size: 1em; }
+        body.ui-mosaic .name-row { display: block; }
+        body.ui-mosaic .copy-btn { display: none; }
+    """,
+    "split": """
+        body.ui-split {
+            background: #f0f3f7;
+            padding: 18px;
+            color: #1c2733;
+        }
+        body.ui-split .container { max-width: 1760px; }
+        body.ui-split .works-grid {
+            grid-template-columns: 360px minmax(0, 1fr);
+            gap: 16px;
+        }
+        body.ui-split .work-card {
+            display: block;
+            border-radius: 14px;
+            overflow: hidden;
+            background: #fff;
+            border: 1px solid #dbe4ee;
+        }
+        body.ui-split .work-card:nth-child(1) {
+            grid-row: 1 / span 4;
+        }
+        body.ui-split .image-carousel { height: 240px; }
+        body.ui-split .work-content { padding: 16px; }
+        body.ui-split .description-text,
+        body.ui-split .intro-section { max-height: 180px; overflow: auto; }
+        body.ui-split .description-section { margin-bottom: 12px; }
+    """,
+    "timeline": """
+        body.ui-timeline {
+            background: #111827;
+            padding: 22px;
+        }
+        body.ui-timeline .container { max-width: 1500px; }
+        body.ui-timeline .works-grid {
+            grid-template-columns: 1fr;
+            gap: 16px;
+        }
+        body.ui-timeline .work-card {
+            display: grid;
+            grid-template-columns: 220px minmax(0, 1fr);
+            border-radius: 12px;
+            overflow: hidden;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.08);
+            backdrop-filter: blur(14px);
+        }
+        body.ui-timeline .image-carousel { height: 100%; min-height: 260px; }
+        body.ui-timeline .work-content { padding: 16px; color: #edf4fb; }
+        body.ui-timeline .name-text { color: #fff; }
+        body.ui-timeline .description-text { color: rgba(255,255,255,0.76); }
+        body.ui-timeline .work-card:nth-child(odd) {
+            margin-left: 0;
+        }
+    """,
+    "glass": """
+        body.ui-glass {
+            background:
+                radial-gradient(circle at top left, rgba(115,103,240,0.24), transparent 24%),
+                radial-gradient(circle at bottom right, rgba(56,189,248,0.2), transparent 26%),
+                linear-gradient(135deg, #0f172a 0%, #111827 100%);
+            padding: 18px;
+        }
+        body.ui-glass .container { max-width: 1700px; }
+        body.ui-glass .work-card,
+        body.ui-glass .top-bar,
+        body.ui-glass .category-bar {
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.14);
+            backdrop-filter: blur(18px);
+            box-shadow: 0 20px 56px rgba(0,0,0,0.26);
+        }
+        body.ui-glass .works-grid {
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 16px;
+        }
+        body.ui-glass .work-card {
+            border-radius: 18px;
+            overflow: hidden;
+        }
+        body.ui-glass .image-carousel { height: 260px; }
+        body.ui-glass .work-content { padding: 16px; color: #eef6ff; }
+        body.ui-glass .kind-pill { background: rgba(255,255,255,0.1); color: #d6f3ff; }
+    """,
+    "cinema": """
+        body.ui-cinema {
+            background: #050608;
+            padding: 16px 22px;
+        }
+        body.ui-cinema .container { max-width: 1800px; }
+        body.ui-cinema .top-bar { justify-content: flex-start; margin-bottom: 14px; }
+        body.ui-cinema .works-grid {
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 12px;
+        }
+        body.ui-cinema .work-card {
+            border-radius: 8px;
+            overflow: hidden;
+            background: #0c0d12;
+            border: 1px solid rgba(255,255,255,0.08);
+        }
+        body.ui-cinema .image-carousel { height: 360px; }
+        body.ui-cinema .work-content { padding: 12px; color: #f2f5f9; }
+        body.ui-cinema .description-section,
+        body.ui-cinema .intro-section { display: none; }
+    """,
+    "archive": """
+        body.ui-archive {
+            background: #f7f3eb;
+            color: #2b251e;
+            padding: 20px;
+        }
+        body.ui-archive .container { max-width: 1500px; }
+        body.ui-archive .works-grid {
+            grid-template-columns: 1fr;
+            gap: 14px;
+        }
+        body.ui-archive .work-card {
+            display: grid;
+            grid-template-columns: 160px minmax(0, 1fr);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid #d8ccb8;
+            background: #fffdf8;
+        }
+        body.ui-archive .image-carousel { height: 100%; min-height: 180px; }
+        body.ui-archive .work-content { padding: 14px; }
+        body.ui-archive .description-text {
+            max-height: 120px;
+            overflow: auto;
+        }
+    """,
+    "prism": """
+        body.ui-prism {
+            background:
+                linear-gradient(135deg, rgba(34,211,238,0.08), transparent 35%),
+                linear-gradient(225deg, rgba(168,85,247,0.12), transparent 30%),
+                #0b1020;
+            padding: 18px;
+        }
+        body.ui-prism .works-grid {
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 14px;
+        }
+        body.ui-prism .work-card {
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 20px 48px rgba(0,0,0,0.28);
+        }
+        body.ui-prism .work-card:hover {
+            transform: translateY(-5px) skewX(-0.15deg);
+        }
+        body.ui-prism .image-carousel { height: 300px; }
+        body.ui-prism .work-content { padding: 14px; }
+    """,
+    "spotlight": """
+        body.ui-spotlight {
+            background:
+                radial-gradient(circle at 50% 0, rgba(250,204,21,0.18), transparent 26%),
+                #050505;
+            padding: 18px;
+        }
+        body.ui-spotlight .works-grid {
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 18px;
+        }
+        body.ui-spotlight .work-card {
+            border-radius: 18px;
+            overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.04);
+            box-shadow: 0 18px 46px rgba(0,0,0,0.34);
+        }
+        body.ui-spotlight .work-card:hover {
+            transform: translateY(-6px) scale(1.01);
+            box-shadow: 0 26px 68px rgba(0,0,0,0.44);
+        }
+        body.ui-spotlight .image-carousel { height: 340px; }
+        body.ui-spotlight .work-content { padding: 16px; color: #f7f7f7; }
+        body.ui-spotlight .description-section,
+        body.ui-spotlight .intro-section { max-height: 140px; overflow: auto; }
+    """,
+    "compact": """
+        body.ui-compact {
+            background: #0f1720;
+            padding: 16px;
+        }
+        body.ui-compact .container { max-width: 1900px; }
+        body.ui-compact h1 {
+            text-align: left;
+            font-size: 1.7em;
+            color: #e6edf3;
+            letter-spacing: 0;
+            text-shadow: none;
+        }
+        body.ui-compact .top-bar {
+            justify-content: flex-start;
+            margin-bottom: 14px;
+            padding-right: 430px;
+        }
+        body.ui-compact .style-switcher {
+            left: 180px;
+            max-width: 760px;
+        }
+        body.ui-compact .style-link {
+            min-height: 30px;
+            padding: 5px 10px;
+            color: #b7c4d3;
+            background: rgba(255,255,255,0.06);
+            border-color: rgba(255,255,255,0.12);
+        }
+        body.ui-compact .style-link.active {
+            color: #07130e;
+            background: #7ee2a8;
+        }
+        body.ui-compact .search-input {
+            height: 38px;
+            color: #e6edf3;
+            background: rgba(255,255,255,0.08);
+            border-color: rgba(255,255,255,0.16);
+            box-shadow: none;
+        }
+        body.ui-compact .category-bar {
+            justify-content: flex-start;
+            margin-bottom: 14px;
+        }
+        body.ui-compact .category-label,
+        body.ui-compact .category-meta,
+        body.ui-compact .page-info {
+            color: #b7c4d3;
+        }
+        body.ui-compact .category-select {
+            color: #e6edf3;
+            background: #182331;
+            border: 1px solid rgba(255,255,255,0.12);
+            box-shadow: none;
+        }
+        body.ui-compact .category-dropdown,
+        body.ui-compact .category-search-wrap,
+        body.ui-compact .category-option-list {
+            background: #182331;
+        }
+        body.ui-compact .category-option,
+        body.ui-compact .category-option-count {
+            color: #e6edf3;
+        }
+        body.ui-compact .work-type-btn {
+            color: #b7c4d3;
+            background: rgba(255,255,255,0.06);
+            border-color: rgba(255,255,255,0.12);
+            padding: 3px 9px;
+        }
+        body.ui-compact .work-type-btn.active,
+        body.ui-compact .page-btn,
+        body.ui-compact .floating-btn.secondary {
+            color: #07130e;
+            background: #7ee2a8;
+        }
+        body.ui-compact .works-grid {
+            grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+            gap: 12px;
+        }
+        body.ui-compact .work-card {
+            border-radius: 10px;
+            background: #182331;
+            color: #e6edf3;
+            box-shadow: 0 12px 28px rgba(0,0,0,0.28);
+        }
+        body.ui-compact .work-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 16px 34px rgba(0,0,0,0.34);
+        }
+        body.ui-compact .image-carousel {
+            height: 190px;
+            background: #0a111a;
+        }
+        body.ui-compact .work-content { padding: 12px; }
+        body.ui-compact .name-section {
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom-color: rgba(255,255,255,0.1);
+        }
+        body.ui-compact .maker-name,
+        body.ui-compact .work-kind-row,
+        body.ui-compact .description-text,
+        body.ui-compact .intro-content,
+        body.ui-compact .name-translated-text {
+            color: #9fb0c3;
+        }
+        body.ui-compact .name-row {
+            display: block;
+            margin-bottom: 8px;
+        }
+        body.ui-compact .name-label { display: none; }
+        body.ui-compact .name-text {
+            display: block;
+            color: #e6edf3;
+            font-size: 0.98em;
+            line-height: 1.35;
+        }
+        body.ui-compact .name-translated-text {
+            display: block;
+            border: 0;
+            font-size: 0.88em;
+            min-height: 0;
+        }
+        body.ui-compact .copy-btn {
+            margin-top: 6px;
+            padding: 4px 8px;
+            border-radius: 7px;
+            background: #26364a;
+        }
+        body.ui-compact .description-text {
+            display: block;
+            overflow: visible;
+            font-size: 0.84em;
+            line-height: 1.5;
+        }
+        body.ui-compact .intro-section { display: block; }
+        body.ui-compact .scroll-reveal {
+            max-height: 224px;
+            overflow: auto;
+            padding-right: 6px;
+            margin-top: 10px;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(126,226,168,0.48) rgba(255,255,255,0.08);
+        }
+        body.ui-compact .scroll-reveal .description-section,
+        body.ui-compact .scroll-reveal .intro-section {
+            display: block;
+        }
+        body.ui-compact .scroll-reveal .description-text {
+            display: block;
+            overflow: visible;
+        }
+        body.ui-compact .section-title {
+            font-size: 0.9em;
+            color: #7ee2a8;
+        }
+        body.ui-compact .section-title::before { background: #7ee2a8; }
+        body.ui-compact .kind-pill {
+            color: #07130e;
+            background: #7ee2a8;
+            border: 0;
+        }
+        body.ui-compact .state-btn,
+        body.ui-compact .asmr-link-btn {
+            color: #dce7f3;
+            background: #26364a;
+            border-color: rgba(255,255,255,0.08);
+            padding: 5px 9px;
+        }
+        @media (max-width: 900px) {
+            body.ui-gallery .top-bar,
+            body.ui-compact .top-bar {
+                display: block;
+                padding-right: 0;
+            }
+            body.ui-gallery .style-switcher,
+            body.ui-compact .style-switcher {
+                position: relative;
+                left: auto;
+                top: auto;
+                transform: none;
+                margin: 14px 0 0;
+            }
+            body.ui-gallery .search-box,
+            body.ui-compact .search-box {
+                position: relative;
+                right: auto;
+                top: auto;
+                transform: none;
+                width: 100%;
+                min-width: 0;
+                margin-top: 14px;
+            }
+            body.ui-gallery .work-card:nth-child(n),
+            body.ui-gallery .work-card.hero-card {
+                grid-row: auto;
+                min-height: 520px;
+            }
+            body.ui-gallery .work-card:nth-child(n) .image-carousel,
+            body.ui-gallery .work-card.hero-card .image-carousel {
+                height: 360px;
+            }
+        }
+    """,
+}
 
 def generate_page_json(works, page_num):
     start = (page_num - 1) * ITEMS_PER_PAGE
@@ -1377,6 +2573,18 @@ def cleanup_stale_filter_indexes(valid_slugs):
         print(f"  已移除旧筛选索引: {path.relative_to(OUTPUT_DIR)}")
 
 
+def cleanup_stale_style_pages(valid_files):
+    if not OUTPUT_DIR.exists():
+        return
+
+    valid_names = set(valid_files)
+    for path in OUTPUT_DIR.glob("index*.html"):
+        if path.name in valid_names:
+            continue
+        path.unlink()
+        print(f"  已移除旧风格页: {path.relative_to(OUTPUT_DIR)}")
+
+
 def find_work_html_files():
     html_files = []
     seen = set()
@@ -1479,15 +2687,22 @@ def write_work_markdown_files(works):
     print(f"原文对照文件已生成 -> {ORIG_DIR}")
 
 
-def generate_html(total_works):
+def generate_html(total_works, style_key="classic"):
     total_pages = math.ceil(total_works / ITEMS_PER_PAGE)
+    variant = get_style_variant(style_key)
+    active_style_key = variant["key"]
+    style_name = variant["name"]
+    body_class = variant["body_class"]
+    layout_mode = variant.get("layout", "classic")
+    style_switcher_html = build_style_switcher_html(active_style_key)
+    style_extra_css = get_style_extra_css(active_style_key)
 
     return '''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>作品展示</title>
+    <title>作品展示 - ''' + escape_html(style_name) + '''</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -1507,10 +2722,49 @@ def generate_html(total_works):
             text-shadow: 0 0 20px rgba(102, 126, 234, 0.5);
             letter-spacing: 2px;
         }
+        .style-switcher {
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            max-width: min(560px, 42vw);
+        }
+        .style-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 34px;
+            padding: 7px 12px;
+            border: 1px solid rgba(255,255,255,0.22);
+            border-radius: 999px;
+            background: rgba(255,255,255,0.12);
+            color: rgba(255,255,255,0.82);
+            font-size: 0.84em;
+            font-weight: 600;
+            text-decoration: none;
+            white-space: nowrap;
+            backdrop-filter: blur(12px);
+            transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+        }
+        .style-link:hover {
+            transform: translateY(-1px);
+            background: rgba(255,255,255,0.2);
+            color: #fff;
+        }
+        .style-link.active {
+            color: #fff;
+            background: linear-gradient(135deg, #11998e, #38ef7d);
+            border-color: transparent;
+            box-shadow: 0 8px 18px rgba(17, 153, 142, 0.24);
+        }
         .top-bar {
             position: relative;
-            min-height: 56px;
-            margin-bottom: 30px;
+            min-height: 88px;
+            margin-bottom: 24px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -1784,6 +3038,34 @@ def generate_html(total_works):
             margin-bottom: 30px;
             flex-wrap: wrap;
         }
+        .infinite-summary {
+            justify-content: flex-start;
+            margin-bottom: 18px;
+        }
+        .infinite-status {
+            min-height: 70px;
+            margin: 28px 0 78px;
+        }
+        .infinite-status .page-info {
+            padding: 12px 18px;
+            border: 1px solid rgba(255,255,255,0.16);
+            border-radius: 999px;
+            background: rgba(255,255,255,0.08);
+            backdrop-filter: blur(12px);
+        }
+        .loading-dots::after {
+            content: '';
+            display: inline-block;
+            width: 1.4em;
+            text-align: left;
+            animation: loadingDots 1.1s steps(4, end) infinite;
+        }
+        @keyframes loadingDots {
+            0% { content: ''; }
+            25% { content: '.'; }
+            50% { content: '..'; }
+            75%, 100% { content: '...'; }
+        }
         .page-btn {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -2001,6 +3283,32 @@ def generate_html(total_works):
             background: #eef0ff;
             transform: translateY(-1px);
         }
+        .asmr-link-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            border: 1px solid rgba(17, 153, 142, 0.32);
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: #fff;
+            text-decoration: none;
+            border-radius: 999px;
+            padding: 6px 12px;
+            font-size: 0.82em;
+            font-weight: 600;
+            box-shadow: 0 8px 18px rgba(17, 153, 142, 0.18);
+            transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+        }
+        .asmr-link-btn::after {
+            content: '↗';
+            font-size: 0.9em;
+            line-height: 1;
+            opacity: 0.86;
+        }
+        .asmr-link-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 22px rgba(17, 153, 142, 0.28);
+            filter: saturate(1.05);
+        }
         .state-btn.active-like {
             background: #e7fff3;
             border-color: #71d8a1;
@@ -2156,6 +3464,15 @@ def generate_html(total_works):
                 display: block;
                 min-height: 0;
             }
+            .style-switcher {
+                position: relative;
+                left: auto;
+                top: auto;
+                transform: none;
+                justify-content: center;
+                max-width: none;
+                margin-top: 14px;
+            }
             .search-box {
                 position: relative;
                 right: auto;
@@ -2169,12 +3486,16 @@ def generate_html(total_works):
             .category-bar { justify-content: flex-start; }
             .floating-actions { left: 12px; right: 12px; bottom: 12px; }
         }
+        ''' + style_extra_css + '''
     </style>
 </head>
-<body>
+<body class="''' + escape_html(body_class) + '''">
     <div class="container">
         <div class="top-bar">
             <h1>作品展示</h1>
+            <nav class="style-switcher" aria-label="切换 UI">
+                ''' + style_switcher_html + '''
+            </nav>
             <div class="search-box" role="search">
                 <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <circle cx="11" cy="11" r="7"></circle>
@@ -2212,8 +3533,8 @@ def generate_html(total_works):
         <div class="pagination" id="paginationBottom"></div>
     </div>
     <div class="floating-actions">
-        <button class="floating-btn" onclick="markCurrentPageRead()">本页已阅</button>
-        <button class="floating-btn secondary" onclick="unmarkCurrentPageRead()">取消本页已阅</button>
+        <button class="floating-btn" onclick="markCurrentPageRead()">已加载内容已阅</button>
+        <button class="floating-btn secondary" onclick="unmarkCurrentPageRead()">取消已加载已阅</button>
         <button class="floating-btn secondary" id="hideReadToggle" onclick="toggleHideRead()">隐藏已阅：关</button>
         <button class="floating-btn secondary" id="showAllVersionsToggle" onclick="toggleShowAllVersions()">全部版本：关</button>
     </div>
@@ -2225,10 +3546,14 @@ def generate_html(total_works):
         const FALLBACK_TOTAL_WORKS = ''' + str(total_works) + ''';
         const FALLBACK_TOTAL_PAGES = ''' + str(total_pages) + ''';
         const ITEMS_PER_PAGE = ''' + str(ITEMS_PER_PAGE) + ''';
+        const LAYOUT_MODE = ''' + json.dumps(layout_mode, ensure_ascii=False) + ''';
         let categories = [];
         let currentCategory = null;
-        let currentPage = 1;
-        let currentData = null;
+        let currentPage = 0;
+        let currentData = [];
+        let isLoadingMore = false;
+        let infiniteScrollObserver = null;
+        let loadSequence = 0;
         let indexedResultEntries = null;
         let searchIndex = null;
         let searchIndexPromise = null;
@@ -2479,8 +3804,7 @@ def generate_html(total_works):
             searchQuery = nextQuery;
             searchTerms = searchQuery ? searchQuery.split(' ').filter(Boolean) : [];
             invalidateSearchResults();
-            currentPage = 1;
-            await goToPage(1, true);
+            await resetInfiniteList(true);
         }
 
         async function loadSearchIndex() {
@@ -2762,19 +4086,18 @@ def generate_html(total_works):
             }
             renderWorkTypeButtons();
             invalidateSearchResults();
-            goToPage(1, true);
+            resetInfiniteList(true);
         }
 
         async function changeCategory(slug) {
             currentCategory = STATUS_CATEGORIES[slug]
                 ? createStatusCategory(slug)
                 : (categories.find((category) => category.slug === slug) || categories[0]);
-            currentPage = 1;
             activeWorkTypes = [];
             invalidateSearchResults();
             renderCategorySelect();
             renderWorkTypeButtons();
-            await goToPage(1, true);
+            await resetInfiniteList(true);
         }
 
         async function loadPageData(page) {
@@ -2887,6 +4210,25 @@ def generate_html(total_works):
             return html;
         }
 
+        function getWorkCardClass(idx) {
+            const classes = ['work-card', 'layout-' + LAYOUT_MODE];
+            if (LAYOUT_MODE === 'gallery' && idx % 7 === 0) {
+                classes.push('hero-card');
+            }
+            return classes.join(' ');
+        }
+
+        function isAudioWork(work) {
+            const kind = String((work && work.work_kind) || '');
+            return kind.includes('ASMR') || kind.includes('音声') || kind.includes('ボイス');
+        }
+
+        function buildAsmrOneUrl(work) {
+            const productId = String((work && work.product_id) || '').trim().toUpperCase();
+            if (!productId) return '';
+            return 'https://www.asmr.one/work/' + encodeURIComponent(productId);
+        }
+
         async function setWorkPreference(workId, preference) {
             const state = { ...getWorkState(workId) };
             state.preference = state.preference === preference ? '' : preference;
@@ -2894,7 +4236,7 @@ def generate_html(total_works):
             saveWorkStates();
             renderCategorySelect();
             invalidateSearchResults();
-            await goToPage(currentPage, true);
+            await resetInfiniteList(true);
         }
 
         async function markCurrentPageRead() {
@@ -2906,7 +4248,7 @@ def generate_html(total_works):
             saveWorkStates();
             renderCategorySelect();
             invalidateSearchResults();
-            await goToPage(currentPage, true);
+            await resetInfiniteList(true);
         }
 
         async function unmarkCurrentPageRead() {
@@ -2918,14 +4260,14 @@ def generate_html(total_works):
             saveWorkStates();
             renderCategorySelect();
             invalidateSearchResults();
-            await goToPage(currentPage, true);
+            await resetInfiniteList(true);
         }
 
         async function toggleHideRead() {
             hideReadWorks = !hideReadWorks;
             updateFloatingControls();
             invalidateSearchResults();
-            await goToPage(1, true);
+            await resetInfiniteList(true);
         }
 
         async function toggleShowAllVersions() {
@@ -2933,7 +4275,7 @@ def generate_html(total_works):
             localStorage.setItem('dlsiteShowAllVersions.v1', showAllVersions ? '1' : '0');
             updateFloatingControls();
             invalidateSearchResults();
-            await goToPage(1, true);
+            await resetInfiniteList(true);
         }
 
         function updateFloatingControls() {
@@ -2949,23 +4291,23 @@ def generate_html(total_works):
             }
         }
 
-        function renderWorks() {
-            if (!currentData) return;
+        function renderEmptyState() {
             const grid = document.getElementById('worksGrid');
-            grid.innerHTML = '';
+            grid.innerHTML = '<div class="empty-state">没有符合筛选条件的作品</div>';
+            renderPagination();
+            updateFloatingControls();
+        }
 
-            if (currentData.length === 0) {
-                grid.innerHTML = '<div class="empty-state">没有符合筛选条件的作品</div>';
-                renderPagination();
-                updateFloatingControls();
-                return;
-            }
-            
-            for (let idx = 0; idx < currentData.length; idx++) {
-                const work = currentData[idx];
-                const globalIdx = (currentPage - 1) * ITEMS_PER_PAGE + idx;
+        function appendWorks(pageData, page) {
+            const grid = document.getElementById('worksGrid');
+            const startIndex = currentData.length;
+
+            for (let idx = 0; idx < pageData.length; idx++) {
+                const work = pageData[idx];
+                const globalIdx = (page - 1) * ITEMS_PER_PAGE + idx;
+                const layoutIdx = startIndex + idx;
                 const card = document.createElement('div');
-                card.className = 'work-card';
+                card.className = getWorkCardClass(layoutIdx);
 
                 let imagesHtml = '';
                 work.slider_images.forEach((img, imageIndex) => {
@@ -2988,11 +4330,16 @@ def generate_html(total_works):
                 const dislikeActive = state.preference === 'disliked';
                 const playedActive = state.preference === 'played';
                 const kindHtml = '<div class="work-kind-row"><span>作品类型</span><span class="kind-pill">' + escapeHtml(work.work_kind || '游戏') + '</span></div>';
+                const asmrOneUrl = isAudioWork(work) ? buildAsmrOneUrl(work) : '';
+                const asmrButtonHtml = asmrOneUrl
+                    ? '<a class="asmr-link-btn" href="' + escapeHtml(asmrOneUrl) + '" target="_blank" rel="noopener noreferrer" title="在 ASMR One 打开">ASMR One</a>'
+                    : '';
                 const actionHtml =
                     '<div class="work-action-row">' +
                         '<button class="state-btn ' + (likeActive ? 'active-like' : '') + '" onclick="setWorkPreference(\\'' + work.product_id + '\\', \\'liked\\')">喜欢</button>' +
                         '<button class="state-btn ' + (dislikeActive ? 'active-dislike' : '') + '" onclick="setWorkPreference(\\'' + work.product_id + '\\', \\'disliked\\')">不需要</button>' +
                         '<button class="state-btn ' + (playedActive ? 'active-played' : '') + '" onclick="setWorkPreference(\\'' + work.product_id + '\\', \\'played\\')">玩过</button>' +
+                        asmrButtonHtml +
                         (state.read ? '<span class="state-pill read">已阅</span>' : '') +
                     '</div>';
 
@@ -3012,6 +4359,10 @@ def generate_html(total_works):
                         }
                     }
                 });
+
+                const useScrollReveal = LAYOUT_MODE === 'gallery' || LAYOUT_MODE === 'compact';
+                const detailWrapStart = useScrollReveal ? '<div class="scroll-reveal">' : '';
+                const detailWrapEnd = useScrollReveal ? '</div>' : '';
 
                 card.innerHTML =
                     '<div class="image-carousel">' +
@@ -3036,18 +4387,21 @@ def generate_html(total_works):
                                 '<button class="copy-btn" onclick="copyText(document.getElementById(\\'name-trans-' + globalIdx + '\\').textContent, this)">复制</button>' +
                             '</div>' +
                         '</div>' +
-                        '<div class="description-section">' +
-                            '<div class="section-title">简介</div>' +
-                            '<div class="description-text">' + escapeHtml(work.description) + '</div>' +
-                        '</div>' +
-                        '<div class="intro-section">' +
-                            '<div class="section-title">详细介绍</div>' + partsHtml +
-                        '</div>' +
+                        detailWrapStart +
+                            '<div class="description-section">' +
+                                '<div class="section-title">简介</div>' +
+                                '<div class="description-text">' + escapeHtml(work.description) + '</div>' +
+                            '</div>' +
+                            '<div class="intro-section">' +
+                                '<div class="section-title">详细介绍</div>' + partsHtml +
+                            '</div>' +
+                        detailWrapEnd +
                     '</div>';
 
                 grid.appendChild(card);
             }
-            
+
+            currentData = currentData.concat(pageData);
             renderPagination();
             updateFloatingControls();
         }
@@ -3057,57 +4411,29 @@ def generate_html(total_works):
             const paginationBottom = document.getElementById('paginationBottom');
             const totalPages = currentTotalPages;
             const totalWorks = currentTotalWorks;
-            
-            let html = '';
-            
-            html += '<button class="page-btn" onclick="goToPage(' + (currentPage - 1) + ')" ' + (currentPage === 1 ? 'disabled' : '') + '>上一页</button>';
-            
-            const maxButtons = 9;
-            let startPage = Math.max(1, currentPage - Math.floor(maxButtons / 2));
-            let endPage = Math.min(totalPages, startPage + maxButtons - 1);
-            
-            if (endPage - startPage < maxButtons - 1) {
-                startPage = Math.max(1, endPage - maxButtons + 1);
+            const loadedWorks = currentData.length;
+            const loadedText = loadedWorks + ' / ' + totalWorks + ' 个作品';
+            const pageText = currentPage > 0 ? ('已加载 ' + currentPage + ' / ' + totalPages + ' 页') : '准备加载';
+            const topHtml = '<span class="page-info">' + loadedText + '，' + pageText + '</span>';
+
+            let bottomHtml = '';
+            if (isLoadingMore) {
+                bottomHtml = '<span class="page-info loading-dots">正在加载下一页</span>';
+            } else if (loadedWorks === 0) {
+                bottomHtml = '<span class="page-info">没有符合筛选条件的作品</span>';
+            } else if (currentPage >= totalPages) {
+                bottomHtml = '<span class="page-info">已经加载全部 ' + loadedWorks + ' 个作品</span>';
+            } else {
+                bottomHtml = '<span class="page-info">继续向下滚动，自动加载第 ' + (currentPage + 1) + ' 页</span>';
             }
-            
-            if (startPage > 1) {
-                html += '<button class="page-btn" onclick="goToPage(1)">1</button>';
-                if (startPage > 2) {
-                    html += '<span class="page-info">...</span>';
-                }
-            }
-            
-            for (let i = startPage; i <= endPage; i++) {
-                html += '<button class="page-btn ' + (i === currentPage ? 'active' : '') + '" onclick="goToPage(' + i + ')">' + i + '</button>';
-            }
-            
-            if (endPage < totalPages) {
-                if (endPage < totalPages - 1) {
-                    html += '<span class="page-info">...</span>';
-                }
-                html += '<button class="page-btn" onclick="goToPage(' + totalPages + ')">' + totalPages + '</button>';
-            }
-            
-            html += '<button class="page-btn" onclick="goToPage(' + (currentPage + 1) + ')" ' + (currentPage === totalPages ? 'disabled' : '') + '>下一页</button>';
-            html += '<span class="page-info">' + totalWorks + ' 个作品 / 共 ' + totalPages + ' 页</span>';
-            
-            paginationTop.innerHTML = html;
-            paginationBottom.innerHTML = html;
+
+            paginationTop.classList.add('infinite-summary');
+            paginationBottom.classList.add('infinite-status');
+            paginationTop.innerHTML = topHtml;
+            paginationBottom.innerHTML = bottomHtml;
         }
 
-        async function goToPage(page, keepScroll) {
-            const totalPages = (isSearchActive() || requiresFullDataFiltering())
-                ? Number.MAX_SAFE_INTEGER
-                : (currentCategory ? currentCategory.pages : FALLBACK_TOTAL_PAGES);
-            if (page < 1 || page > totalPages) return;
-            
-            currentPage = page;
-            currentData = await loadPageData(page);
-            if (currentPage > currentTotalPages) {
-                currentPage = currentTotalPages;
-                currentData = await loadPageData(currentPage);
-            }
-            renderWorks();
+        function updateCategoryMeta() {
             const meta = document.getElementById('categoryMeta');
             if (currentCategory && meta) {
                 if (isSearchActive()) {
@@ -3117,6 +4443,80 @@ def generate_html(total_works):
                     meta.textContent = currentTotalWorks + ' 个作品 / 共 ' + currentTotalPages + ' 页' + filterText;
                 }
             }
+        }
+
+        function setupInfiniteScroll() {
+            const sentinel = document.getElementById('paginationBottom');
+            if (!sentinel) return;
+            if (infiniteScrollObserver) {
+                infiniteScrollObserver.disconnect();
+            }
+
+            infiniteScrollObserver = new IntersectionObserver((entries) => {
+                if (entries.some((entry) => entry.isIntersecting)) {
+                    loadNextPage();
+                }
+            }, { rootMargin: '900px 0px 1200px', threshold: 0 });
+
+            infiniteScrollObserver.observe(sentinel);
+        }
+
+        async function resetInfiniteList(keepScroll) {
+            const sequence = ++loadSequence;
+            currentPage = 0;
+            currentData = [];
+            isLoadingMore = false;
+            document.getElementById('worksGrid').innerHTML = '';
+            renderPagination();
+            if (!keepScroll) {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+            await loadNextPage(sequence);
+        }
+
+        async function loadNextPage(expectedSequence) {
+            const sequence = expectedSequence ?? loadSequence;
+            if (sequence !== loadSequence || isLoadingMore) return;
+            if (currentPage > 0 && currentPage >= currentTotalPages) {
+                renderPagination();
+                return;
+            }
+            await goToPage(currentPage + 1, true, sequence);
+        }
+
+        async function goToPage(page, keepScroll, expectedSequence) {
+            const sequence = expectedSequence ?? ++loadSequence;
+            const totalPages = (isSearchActive() || requiresFullDataFiltering())
+                ? Number.MAX_SAFE_INTEGER
+                : (currentCategory ? currentCategory.pages : FALLBACK_TOTAL_PAGES);
+            if (page < 1 || page > totalPages) return;
+
+            isLoadingMore = true;
+            renderPagination();
+            const pageData = await loadPageData(page);
+            if (sequence !== loadSequence) return;
+
+            if (page > currentTotalPages) {
+                isLoadingMore = false;
+                renderPagination();
+                return;
+            }
+
+            currentPage = page;
+            isLoadingMore = false;
+            updateCategoryMeta();
+
+            if (!Array.isArray(pageData) || pageData.length === 0) {
+                if (currentData.length === 0) {
+                    renderEmptyState();
+                } else {
+                    renderPagination();
+                    updateFloatingControls();
+                }
+                return;
+            }
+
+            appendWorks(pageData, page);
             if (!keepScroll) {
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             }
@@ -3124,7 +4524,8 @@ def generate_html(total_works):
 
         (async () => {
             await initWorkStates();
-            loadCategories();
+            await loadCategories();
+            setupInfiniteScroll();
         })();
     </script>
 </body>
@@ -3407,11 +4808,19 @@ async def main():
         json.dump(manifest, f, ensure_ascii=False, indent=2)
     print(f"\n已生成分类索引: {CATEGORIES_FILE}")
 
-    # 生成 HTML
-    html = generate_html(len(works))
-    with open(OUTPUT_DIR / "index.html", "w", encoding="utf-8") as f:
-        f.write(html)
-    print(f"\n已生成: {OUTPUT_DIR / 'index.html'}")
+    # 生成多套同功能展示页风格
+    generated_pages = []
+    for variant in STYLE_VARIANTS:
+        html = generate_html(len(works), variant["key"])
+        html_path = OUTPUT_DIR / variant["file"]
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html)
+        generated_pages.append((variant["name"], html_path))
+    cleanup_stale_style_pages({variant["file"] for variant in STYLE_VARIANTS})
+
+    print("\n已生成网页风格:")
+    for name, html_path in generated_pages:
+        print(f"  - {name}: {html_path}")
 
     print("\n完成！运行 open_page.py 查看结果")
 
